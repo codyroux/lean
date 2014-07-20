@@ -154,38 +154,57 @@ print(pat_from_expr(add(a, b)))
 
 local x = Local('x', Nat)
 local y = Local('y', Nat)
-pat = sexpr(add, sexpr(x, y),
-            sexpr(sexpr(zero,    zero,    "=", zero),
-                  sexpr(succ(x), zero,    "=", succ(x)),
-                  sexpr(zero,    succ(y), "=", succ(y)),
-                  sexpr(succ(x), succ(y), "=", succ(succ(add(x,y))))))
+pat = sexpr(add, {x, y},
+            sexpr({zero,    zero,    "=", zero},
+                  {succ(x), zero,    "=", succ(x)},
+                  {zero,    succ(y), "=", succ(y)},
+                  {succ(x), succ(y), "=", succ(succ(add(x,y)))}))
 
 
 
 function choose_var(vars, pats)
-   if vars:is_nil() then
+   if #vars == 0  then
       return sexpr("done", nil)
-   elseif find_triv(pats) then
-      return sexpr("triv", i)
    else
-      return sepxr("split", 1)
+      local i = find_triv(pats)
+      if i then
+         return sexpr("triv", i)
+      else
+         return sepxr("split", 1)
+      end
    end
 end
 
 function build_mt(fun, vars, pats)
    local c = choose_var(vars, pats)
    if c:head() == sexpr("done") then
-      if (pats:length() ~= 1) then
+      if pats:length() ~= 1 then
          error("ambiguous pattern matching")
+      else
+         return sexpr("return", pats:to_expr())
       end
    elseif c:head() == sexpr("triv") then
-
+      local i = c:tail()
+      local x = vars[i]
+      table.delete(i, vars)
+      old_vars = {}
+      iter(function (p)
+              table.push(old_vars, p[i])
+              table.delete(i, p) end,
+           pats)
+      return sexpr('var', x, old_vars,
+                   build_mt(fun, vars, pats))
    elseif c:head() == sexpr("split") then
+      -- get constructor corresponding to the split
+      local hd_cstr, subs = pats[1]:fields()
+      -- create the variables for the subpatterns
+      local sub_vars = mk_sub_vars(cstr)
 
    else
       error()
    end
 end
+
 
 -- function add_fundef(env, fname, ty, patlen, pats)
 
