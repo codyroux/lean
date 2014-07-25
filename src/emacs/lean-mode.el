@@ -30,9 +30,8 @@
 (require 'lean-server)
 (require 'lean-project)
 
-(defun lean-compile-string (exe-name args file-name)
-  "Concatenate exe-name, args, and file-name"
-  (format "%s %s %s" exe-name args file-name))
+(defvar lean-exe "/home/croux/prog/Cpp/lean/lean/build/debug/shell/lean"
+  "Path for the Lean executable")
 
 (defun lean-create-temp-in-system-tempdir (file-name prefix)
   "Create a temp lean file and return its name"
