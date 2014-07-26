@@ -26,11 +26,11 @@ hypothesis P : Prop.
 check eq_rec.
 
 -- Crashes unifier!
--- theorem false_aux : ¬ (δ (i delta))
---         := assume H : δ (i delta),
---            have H' : r (i delta) (i delta),
---                 from eq_rec H _ (symm retract),
---            H H'.
+theorem false_aux : ¬ (δ (i delta))
+        := assume H : δ (i delta),
+           have H' : r (i delta) (i delta),
+                from eq_rec H _ (symm retract),
+           H H'.
 
 theorem delta_aux : ¬ (δ (i delta))
         := assume H : δ (i delta),
@@ -50,9 +50,14 @@ theorem delta_iff_neg : δ (i delta) ↔ ¬ δ (i delta)
 := iff_intro
         (assume H: δ (i delta),
         -- something weird is happening here
-        delta_aux)
+        -- delta_aux)
+        sorry)
 
         (assume H : ¬ δ (i delta),
         subst (symm retract) H).
 
-theorem contr : false := iff_false delta_iff_neg.
+-- theorem contr : false := iff_false delta_iff_neg.
+-- theorem contr : false :=
+-- @iff_false (δ (i delta)) sorry
+
+theorem contr : false := iff_false (@sorry ((δ (i delta)) ↔ ¬ (δ (i delta))) )
