@@ -65,8 +65,9 @@ end
 
 hypothesis I : Type.
 
--- definition F (X : Type) : Type := (X → Prop) → Prop.
-hypothesis F.{l} (X : Type.{l}) : Type.{l}.
+definition F (X : Type) : Type := (X → Prop) → Prop.
+-- hypothesis F.{l} (X : Type.{l}) : Type.{l}.
+
 
 -- set_option pp.universes true.
 
@@ -92,20 +93,49 @@ check case.
 
 definition ite {A : Type} : Prop → A → A → A := λ P a b, case _ a b P.
 
-axiom sorry (t : Type) : t.
+axiom sorry (t : Prop) : t.
 
 check exists_intro.
 
 check inhabited_elim.
 
-definition image {A B : Type} (f : A → B) : B → Prop := λ y, ∃ x : A, f x = y.
+definition witness {A : Type} : inhabited A → A:=
+λ inh, inhabited_elim inh (λ a, a).
 
-theorem inj_is_retract : ∀ (A B : Type) (f : A → B), inhabited A → inj f → ∃ g, retract f g
-:= assume A B : Type,
-   assume f : A → B,
-   assume H : inhabited A,
-   assume inj_f : inj f,
-          inhabited_elim H
-          (assume a : A,
-           let g := sorry (B → A) in
-           exists_intro g _).
+definition by_pieces {A B : Type} {P : A → Prop} : (∀ a : A, P a → B) → (∀ a : A, ¬ P a → B) → A → B
+:= assume on_p : (∀ a, P a → B),
+   assume not_on_p : (∀ a, ¬ P a → B),
+   assume a : A,
+          have H : P a ∨ ¬ P a, from em _,
+          or_elim H
+          (on_p a)
+          (not_on_p a)
+
+theorem by_pieces_definition : ∀ {A B : Type} {P : A → Prop} (f : ∀ a : A, P a → B) (g : ∀ a : A, ¬ P a → B) a,
+        P a → ∃ q, by_pieces f g a = f a q
+:= assume A B P f g,
+   assume a : A,
+   assume p : P a,
+   have H : P a ∨ ¬ P a, from em (P a),
+   or_elim H
+   (λ q : P a, exists_intro q (refl _))
+   (λ n_p, absurd_elim p n_p)
+
+definition in_image {A B : Type} (f : A → B) : B → Prop := λ y, ∃ x : A, f x = y.
+
+definition inv_image {A B : Type} (f : A → B) (inh : inhabited A) : B → A :=
+by_pieces
+  (λ b (p : in_image f b), obtain (x : A) H, from p, x)
+  (λ b (p : ¬ in_image f b), witness inh)
+
+
+
+-- theorem inj_is_retract : ∀ (A B : Type) (f : A → B), inhabited A → inj f → ∃ g, retract f g
+-- := assume A B : Type,
+--    assume f : A → B,
+--    assume H : inhabited A,
+--    assume inj_f : inj f,
+--           inhabited_elim H
+--           (assume a : A,
+--            let g := sorry (B → A) in
+--            exists_intro g _).
