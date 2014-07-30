@@ -119,7 +119,7 @@ theorem by_pieces_definition : ∀ {A B : Type} {P : A → Prop} (f : ∀ a : A,
    have H : P a ∨ ¬ P a, from em (P a),
    or_elim H
    (λ q : P a, exists_intro q (refl _))
-   (λ n_p, absurd_elim p n_p)
+   (λ n_p, absurd_elim _ p n_p)
 
 definition in_image {A B : Type} (f : A → B) : B → Prop := λ y, ∃ x : A, f x = y.
 
