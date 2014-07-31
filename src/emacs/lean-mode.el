@@ -98,51 +98,24 @@
   '(("var"    "variable")
     ("vars"   "variables")
     ("def"    "definition")
-    ("th"     "theorem")))
+    ("th"     "theorem")
+    ))
 
-(defvar lean-mode-map (make-sparse-keymap)
-  "Keymap used in Lean mode")
-
-(easy-menu-define lean-mode-menu lean-mode-map
-  "Menu for the Lean major mode"
-  `("Lean"
-    ["Execute lean"         lean-execute                      t]
-    ["Create a new project" (call-interactively 'lean-project-create) (not (lean-project-inside-p))]
-    "-----------------"
-    ["Show type info"       lean-eldoc-documentation-function lean-eldoc-use]
-    ["Fill a placeholder"   lean-fill-placeholder             (looking-at  (rx symbol-start "_"))]
-    ["Find tag at point"    lean-find-tag                     t]
-    ["Global tag search"    lean-global-search                t]
-    "-----------------"
-    ["Run flycheck"         flycheck-compile                  lean-flycheck-use]
-    ["List of errors"       flycheck-list-errors              lean-flycheck-use]
-    "-----------------"
-    ["Clear all cache"      lean-clear-cache                  t]
-    ["Kill lean process"    lean-server-kill-process          t]
-    ["Restart lean process" lean-server-restart-process       t]
-    "-----------------"
-    ["Customize lean-mode" (customize-group 'lean)            t]))
-
-(defconst lean-hooks-alist
-  '(
-    ;; Handle events that may start automatic syntax checks
-    (before-save-hook                    . lean-whitespace-cleanup)
-    (after-save-hook                     . lean-server-after-save)
-    ;; ;; Handle events that may triggered pending deferred checks
-    ;; (window-configuration-change-hook . lean-perform-deferred-syntax-check)
-    ;; (post-command-hook                . lean-perform-deferred-syntax-check)
-    ;; ;; Teardown Lean whenever the buffer state is about to get lost, to
-    ;; ;; clean up temporary files and directories.
-    ;; (kill-buffer-hook                 . lean-teardown)
-    ;; (change-major-mode-hook           . lean-teardown)
-    (before-revert-hook                  . lean-before-revert)
-    (after-revert-hook                   . lean-after-revert)
-    ;; ;; Update the error list if necessary
-    ;; (post-command-hook                . lean-error-list-update-source)
-    ;; (post-command-hook                . lean-error-list-highlight-errors)
-    ;; ;; Show or hide error popups after commands
-    ;; (post-command-hook                . lean-display-error-at-point-soon)
-    ;; (post-command-hook                . lean-hide-error-buffer)
+(define-generic-mode
+    'lean-mode     ;; name of the mode to create
+  '("--")          ;; comments start with
+  '("import" "abbreviation" "opaque_hint" "tactic_hint" "definition" "renaming" "inline" "hiding" "exposing" "parameter" "parameters" "proof" "qed" "conjecture" "hypothesis" "lemma" "corollary" "variable" "variables" "print" "theorem" "axiom" "inductive" "with" "structure" "universe" "alias" "help" "environment" "options" "precedence" "postfix" "prefix" "calc_trans" "calc_subst" "calc_refl" "infix" "infixl" "infixr" "notation" "eval" "check" "exit" "coercion" "end" "private" "using" "namespace" "builtin" "including" "instance" "section" "set_option" "add_rewrite" "extends") ;; some keywords
+  '(("\\_<\\(bool\\|int\\|nat\\|real\\|Prop\\|Type\\|ℕ\\|ℤ\\)\\_>" . 'font-lock-type-face)
+    ("\\_<\\(calc\\|have\\|obtains\\|show\\|by\\|in\\|let\\|forall\\|fun\\|exists\\|if\\|then\\|else\\|assume\\|take\\|obtain\\|from\\)\\_>" . font-lock-keyword-face)
+    ("\"[^\"]*\"" . 'font-lock-string-face)
+    ("\\(->\\|↔\\|/\\\\\\|==\\|\\\\/\\|[*+/<=>¬∧∨≠≤≥-]\\)" . 'font-lock-constant-face)
+    ("\\(λ\\|→\\|∃\\|∀\\|:\\|:=\\)" . font-lock-constant-face)
+    ("\\_<\\(\\b.*_tac\\|Cond\\|or_else\\|t\\(?:hen\\|ry\\)\\|when\\|assumption\\|apply\\|b\\(?:ack\\|eta\\)\\|done\\|exact\\)\\_>" . 'font-lock-constant-face)
+    ("\\_<\\(universe\\|inductive\\|theorem\\|axiom\\|lemma\\|hypothesis\\|abbreviation\\|definition\\|variable\\|parameter\\)\\_>[ \t\{\[]*\\([^ \t\n]*\\)" (2 'font-lock-function-name-face))
+    ("\\_<\\(variables\\|parameters\\)\\_>[ \t\(\{\[]*\\([^:]*\\)" (2 'font-lock-function-name-face))
+    ("\\(set_opaque\\|set_option\\)[ \t]*\\([^ \t\n]*\\)" (2 'font-lock-constant-face))
+    ("\\_<_\\_>" . 'font-lock-preprocessor-face)
+    ;;
     )
   "Hooks which lean-mode needs to hook in.
 
