@@ -550,101 +550,43 @@ struct unifier_fn {
         }
     }
 
-    /** \brief Process the given constraints. Return true iff no conflict was detected. */
-    bool process_constraints(constraint_seq const & cs) {
-        return cs.all_of([&](constraint const & c) { return process_constraint(c); });
-    }
-
-    bool process_constraints(buffer<constraint> const & cs) {
-        for (auto const & c : cs) {
-            if (!process_constraint(c))
-                return false;
-        }
-        return true;
-    }
-
-
-    /** \brief Process constraints in \c cs, and append justification \c j to them. */
-    bool process_constraints(constraint_seq const & cs, justification const & j) {
-        return cs.all_of([&](constraint const & c) {
-                return process_constraint(update_justification(c, mk_composite1(c.get_justification(), j)));
-            });
-    }
-
-    template<typename Constraints>
-    bool process_constraints(Constraints const & cs, justification const & j) {
-        for (auto const & c : cs) {
-            if (!process_constraint(update_justification(c, mk_composite1(c.get_justification(), j))))
-                return false;
-        }
-        return true;
-    }
-
     /** \brief Put \c e in weak head normal form.
 
         \remark If relax is true then opaque definitions from the main module are treated as transparent.
-        \remark Constraints generated in the process are stored in \c cs.
+        \remark Constraints generated in the process are stored in \c cs. The justification \c j is composed with them.
     */
-    expr whnf(expr const & e, bool relax, constraint_seq & cs) {
-        return m_tc[relax]->whnf(e, cs);
+    expr whnf(expr const & e, justification const & j, bool relax, buffer<constraint> & cs) {
+        unsigned cs_sz = cs.size();
+        expr r = m_tc[relax]->whnf(e, cs);
+        for (unsigned i = cs_sz; i < cs.size(); i++)
+            cs[i] = update_justification(cs[i], mk_composite1(j, cs[i].get_justification()));
+        return r;
+    }
+
+    /** \brief Process the given constraints. Return true iff no conflict was detected. */
+    bool process_constraints(buffer<constraint> & cs) {
+        for (auto const & c : cs)
+            if (!process_constraint(c))
+                return false;
+        return true;
     }
 
     /** \brief Infer \c e type.
 
         \remark Return none if an exception was throw when inferring the type.
         \remark If relax is true then opaque definitions from the main module are treated as transparent.
-        \remark Constraints generated in the process are stored in \c cs.
+        \remark Constraints generated in the process are stored in \c cs. The justification \c j is composed with them.
     */
-    optional<expr> infer(expr const & e, bool relax, constraint_seq & cs) {
+    optional<expr> infer(expr const & e, justification const & j, bool relax, buffer<constraint> & cs) {
         try {
-            return some_expr(m_tc[relax]->infer(e, cs));
+            unsigned cs_sz = cs.size();
+            expr r = m_tc[relax]->infer(e, cs);
+            for (unsigned i = cs_sz; i < cs.size(); i++)
+                cs[i] = update_justification(cs[i], mk_composite1(j, cs[i].get_justification()));
+            return some_expr(r);
         } catch (exception &) {
             return none_expr();
         }
-    }
-
-    expr whnf(expr const & e, justification const & j, bool relax, buffer<constraint> & cs) {
-        constraint_seq _cs;
-        expr r = whnf(e, relax, _cs);
-        to_buffer(_cs, j, cs);
-        return r;
-    }
-
-    expr flex_rigid_whnf(expr const & e, justification const & j, bool relax, buffer<constraint> & cs) {
-        if (m_config.m_computation) {
-            return whnf(e, j, relax, cs);
-        } else {
-            constraint_seq _cs;
-            expr r = m_flex_rigid_tc[relax]->whnf(e, _cs);
-            to_buffer(_cs, j, cs);
-            return r;
-        }
-    }
-
-    justification mk_assign_justification(expr const & m, expr const & m_type, expr const & v_type, justification const & j) {
-        auto r = j.get_main_expr();
-        if (!r) r = m;
-        justification new_j = mk_justification(r, [=](formatter const & fmt, substitution const & subst) {
-                substitution s(subst);
-                format r;
-                expr _m = s.instantiate(m);
-                if (is_meta(_m)) {
-                    r = format("type error in placeholder assignment");
-                } else {
-                    r  = format("type error in placeholder assigned to");
-                    r += pp_indent_expr(fmt, _m);
-                }
-                format expected_fmt, given_fmt;
-                std::tie(expected_fmt, given_fmt) = pp_until_different(fmt, m_type, v_type);
-                r += compose(line(), format("placeholder has type"));
-                r += given_fmt;
-                r += compose(line(), format("but is expected to have type"));
-                r += expected_fmt;
-                r += compose(line(), format("the assignment was attempted when trying to solve"));
-                r += nest(2*get_pp_indent(fmt.get_options()), compose(line(), j.pp(fmt, nullptr, subst)));
-                return r;
-            });
-        return mk_composite1(new_j, j);
     }
 
     /**
@@ -659,19 +601,20 @@ struct unifier_fn {
         lean_assert(is_metavar(m));
         lean_assert(!in_conflict());
         m_subst.assign(m, v, j);
-        constraint_seq cs;
-        auto lhs_type = infer(lhs, relax, cs);
-        auto rhs_type = infer(rhs, relax, cs);
-        if (lhs_type && rhs_type) {
-            if (!process_constraints(cs, j))
-                return false;
-            justification new_j = mk_assign_justification(m, *lhs_type, *rhs_type, j);
-            if (!is_def_eq(*lhs_type, *rhs_type, new_j, relax))
+        expr m_type = mlocal_type(m);
+        expr v_type;
+        buffer<constraint> cs;
+        if (auto type = infer(v, j, relax, cs)) {
+            v_type = *type;
+            if (!process_constraints(cs))
                 return false;
         } else {
             set_conflict(j);
             return false;
         }
+        lean_assert(!in_conflict());
+        if (!is_def_eq(m_type, v_type, j, relax))
+            return false;
         auto it = m_mvar_occs.find(mlocal_name(m));
         if (it) {
             cnstr_idx_set s = *it;
@@ -1245,8 +1188,8 @@ struct unifier_fn {
         expr m_type;
         bool relax = relax_main_opaque(c);
 
-        constraint_seq cs;
-        if (auto type = infer(m, relax, cs)) {
+        buffer<constraint> cs;
+        if (auto type = infer(m, c.get_justification(), relax, cs)) {
             m_type = *type;
             if (!process_constraints(cs))
                 return false;
@@ -1402,12 +1345,30 @@ struct unifier_fn {
             return *u.m_tc[relax];
         }
 
-        type_checker & restricted_tc() {
-            if (u.m_config.m_computation)
-                return *u.m_tc[relax];
-            else
-                return *u.m_flex_rigid_tc[relax];
+    /**
+       \brief Make sure mtype is a Pi of size at least margs.size().
+       If it is not, we use ensure_pi and (potentially) add new constaints to enforce it.
+    */
+    optional<expr> ensure_sufficient_args(expr const & mtype, buffer<expr> const & margs, buffer<constraint> & cs,
+                                          justification const & j, bool relax) {
+        expr t = mtype;
+        unsigned num = 0;
+        while (is_pi(t)) {
+            num++;
+            t = binding_body(t);
         }
+        if (num == margs.size())
+            return some_expr(mtype);;
+        lean_assert(!m_tc[relax]->next_cnstr()); // make sure there are no pending constraints
+        // We must create a scope to make sure no constraints "leak" into the current state.
+        type_checker::scope scope(*m_tc[relax]);
+        auto new_mtype = ensure_sufficient_args_core(mtype, 0, margs, relax);
+        if (!new_mtype)
+            return none_expr();
+        while (auto c = m_tc[relax]->next_cnstr())
+            cs.push_back(update_justification(*c, mk_composite1(c->get_justification(), j)));
+        return new_mtype;
+    }
 
         /** \brief Return true if margs contains an expression \c e s.t. is_meta(e) */
         bool has_meta_args() {
@@ -1906,19 +1867,12 @@ struct unifier_fn {
         if (is_app(rhs)) {
             expr const & f = get_app_fn(rhs);
             if (!is_local(f) && !is_constant(f)) {
-                if (auto new_rhs = expand_rhs(rhs, relax)) {
-                    lean_assert(*new_rhs != rhs);
-                    return is_def_eq(lhs, *new_rhs, j, relax);
-                } else {
+                buffer<constraint> cs;
+                expr new_rhs = whnf(rhs, j, relax, cs);
+                lean_assert(new_rhs != rhs);
+                if (!process_constraints(cs))
                     return false;
-                }
-            }
-        } else if (is_macro(rhs)) {
-            if (auto new_rhs = expand_rhs(rhs, relax)) {
-                lean_assert(*new_rhs != rhs);
-                return is_def_eq(lhs, *new_rhs, j, relax);
-            } else {
-                return false;
+                return is_def_eq(lhs, new_rhs, j, relax);
             }
         }
 
@@ -1927,28 +1881,13 @@ struct unifier_fn {
         buffer<constraints> alts;
         process_flex_rigid_core(lhs, rhs, j, relax, alts);
         append_auxiliary_constraints(alts, to_list(aux.begin(), aux.end()));
-        if (use_flex_rigid_whnf_split(lhs, rhs)) {
-            expr rhs_whnf = flex_rigid_whnf(rhs, j, relax, aux);
-            if (rhs_whnf != rhs) {
-                if (is_meta(rhs_whnf)) {
-                    // it become a flex-flex constraint
-                    alts.push_back(constraints(mk_eq_cnstr(lhs, rhs_whnf, j, relax)));
-                } else {
-                    buffer<constraints> alts2;
-                    process_flex_rigid_core(lhs, rhs_whnf, j, relax, alts2);
-                    append_auxiliary_constraints(alts2, to_list(aux.begin(), aux.end()));
-                    alts.append(alts2);
-                }
-            }
+        expr rhs_whnf = whnf(rhs, j, relax, aux);
+        if (rhs_whnf != rhs) {
+            buffer<constraints> alts2;
+            process_flex_rigid_core(lhs, rhs_whnf, j, relax, alts2);
+            append_auxiliary_constraints(alts2, to_list(aux.begin(), aux.end()));
+            alts.append(alts2);
         }
-
-        // std::cout << "FlexRigid\n";
-        // for (auto cs : alts) {
-        //     std::cout << " alternative\n";
-        //     for (auto c : cs) {
-        //         std::cout << "   >> " << c << "\n";
-        //     }
-        // }
 
         if (alts.empty()) {
             set_conflict(j);
