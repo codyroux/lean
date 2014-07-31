@@ -9,25 +9,26 @@
 --
 -- Basic properties of lists.
 
-import logic data.nat
+import tactic
+import nat
 -- import congr
 
-open nat
--- open congr
-open eq.ops eq
-
-inductive list (T : Type) : Type :=
-nil {} : list T,
-cons : T → list T → list T
-
-definition refl := @eq.refl
+set_option unifier.expensive true
+using nat
+-- using congr
+using eq_proofs
 
 namespace list
+
 
 -- Type
 -- ----
 
-infixr `::` := cons
+inductive list (T : Type) : Type :=
+| nil {} : list T
+| cons : T → list T → list T
+
+infix `::` : 65 := cons
 
 section
 
@@ -35,7 +36,7 @@ variable {T : Type}
 
 theorem list_induction_on {P : list T → Prop} (l : list T) (Hnil : P nil)
     (Hind : forall x : T, forall l : list T, forall H : P l, P (cons x l)) : P l :=
-list.rec Hnil Hind l
+list_rec Hnil Hind l
 
 theorem list_cases_on {P : list T → Prop} (l : list T) (Hnil : P nil)
     (Hcons : forall x : T, forall l : list T, P (cons x l)) : P l :=
@@ -48,9 +49,9 @@ notation `[` l:(foldr `,` (h t, cons h t) nil) `]` := l
 -- ------
 
 definition concat (s t : list T) : list T :=
-list.rec t (fun x : T, fun l : list T, fun u : list T, cons x u) s
+list_rec t (fun x : T, fun l : list T, fun u : list T, cons x u) s
 
-infixl `++` := concat
+infixl `++` : 65 := concat
 
 theorem nil_concat (t : list T) : nil ++ t = t := refl _
 
@@ -99,7 +100,7 @@ list_induction_on s (refl _)
 -- Length
 -- ------
 
-definition length : list T → ℕ := list.rec 0 (fun x l m, succ m)
+definition length : list T → ℕ := list_rec 0 (fun x l m, succ m)
 
 -- TODO: cannot replace zero by 0
 theorem length_nil : length (@nil T) = zero := refl _
@@ -110,20 +111,20 @@ theorem length_concat (s t : list T) : length (s ++ t) = length s + length t :=
 list_induction_on s
   (calc
     length (concat nil t) = length t : refl _
-      ... = 0 + length t : {symm !add.zero_left}
+      ... = zero + length t : {symm (add_zero_left (length t))}
       ... = length (@nil T) + length t : refl _)
   (take x s,
     assume H : length (concat s t) = length s + length t,
     calc
       length (concat (cons x s) t ) = succ (length (concat s t))  : refl _
-        ... = succ (length s + length t)  : { H }
-        ... = succ (length s) + length t  : {symm !add.succ_left}
-        ... = length (cons x s) + length t : refl _)
+	... = succ (length s + length t)  : { H }
+	... = succ (length s) + length t  : {symm (add_succ_left _ _)}
+	... = length (cons x s) + length t : refl _)
 
 -- Reverse
 -- -------
 
-definition reverse : list T → list T := list.rec nil (fun x l r, r ++ [x])
+definition reverse : list T → list T := list_rec nil (fun x l r, r ++ [x])
 
 theorem reverse_nil : reverse (@nil T) = nil := refl _
 
@@ -141,9 +142,9 @@ list_induction_on s
     assume H : reverse (concat l t) = concat (reverse t) (reverse l),
     calc
       reverse (concat (cons x l) t) = concat (reverse (concat l t)) (cons x nil) : refl _
-        ... = concat (concat (reverse t) (reverse l)) (cons x nil) : { H }
-        ... = concat (reverse t) (concat (reverse l) (cons x nil)) : concat_assoc _ _ _
-        ... = concat (reverse t) (reverse (cons x l)) : refl _)
+	... = concat (concat (reverse t) (reverse l)) (cons x nil) : { H }
+	... = concat (reverse t) (concat (reverse l) (cons x nil)) : concat_assoc _ _ _
+	... = concat (reverse t) (reverse (cons x l)) : refl _)
 
 
 -- -- add_rewrite length_nil length_cons
@@ -153,15 +154,15 @@ list_induction_on l (refl _)
     assume H: reverse (reverse l') = l',
     show reverse (reverse (cons x l')) = cons x l', from
       calc
-        reverse (reverse (cons x l')) =
+      	reverse (reverse (cons x l')) =
             concat (reverse (cons x nil)) (reverse (reverse l')) : {reverse_concat _ _}
-          ... = cons x l' : {H})
+      	  ... = cons x l' : {H})
 -- Append
 -- ------
 
 -- TODO: define reverse from append
 
-definition append (x : T) : list T → list T := list.rec (x :: nil) (fun y l l', y :: l')
+definition append (x : T) : list T → list T := list_rec (x :: nil) (fun y l l', y :: l')
 
 theorem append_nil (x : T) : append x nil = [x] := refl _
 
@@ -173,6 +174,7 @@ list_induction_on l (refl _)
     assume P : append x l = concat l [x],
     P ▸ refl _)
 
+set_option unifier.expensive false
 theorem append_eq_reverse_cons  (x : T) (l : list T) : append x l = reverse (x :: reverse l) :=
 list_induction_on l
   (calc
@@ -186,6 +188,47 @@ list_induction_on l
     calc
       append x (y :: l') = (y :: l') ++ [ x ] : append_eq_concat _ _
         ... = concat (reverse (reverse (y :: l'))) [ x ] : {symm (reverse_reverse _)}
-        ... = reverse (x :: (reverse (y :: l'))) : refl _)
-end
-end list
+	... = reverse (x :: (reverse (y :: l'))) : refl _)
+
+exit
+-- Head and tail
+-- -------------
+
+definition head (x0 : T) : list T → T := list_rec x0 (fun x l h, x)
+
+theorem head_nil (x0 : T) : head x0 (@nil T) = x0 := refl _
+
+theorem head_cons (x : T) (x0 : T) (t : list T) : head x0 (x :: t) = x := refl _
+
+theorem head_concat (s t : list T) (x0 : T) : s ≠ nil → (head x0 (s ++ t) = head x0 s) :=
+list_cases_on s
+  (take H : nil ≠ nil, absurd_elim (head x0 (concat nil t) = head x0 nil) (refl nil) H)
+  (take x s,
+    take H : cons x s ≠ nil,
+    calc
+      head x0 (concat (cons x s) t) = head x0 (cons x (concat s t)) : {cons_concat _ _ _}
+        ... = x : {head_cons _ _ _}
+        ... = head x0 (cons x s) : {symm ( head_cons x x0 s)})
+
+definition tail : list T → list T := list_rec nil (fun x l b, l)
+
+theorem tail_nil : tail (@nil T) = nil := refl _
+
+theorem tail_cons (x : T) (l : list T) : tail (cons x l) = l := refl _
+
+theorem cons_head_tail (x0 : T) (l : list T) : l ≠ nil → (head x0 l) :: (tail l) = l :=
+list_cases_on l
+  (assume H : nil ≠ nil, absurd_elim _ (refl _) H)
+  (take x l, assume H : cons x l ≠ nil, refl _)
+
+
+-- List membership
+-- ---------------
+
+definition mem (x : T) : list T → Prop := list_rec false (fun y l H, x = y ∨ H)
+
+infix `∈` : 50 := mem
+
+theorem mem_nil (x : T) : mem x nil ↔ false := iff_refl _
+
+theorem mem_cons (x : T) (y : T) (l : list T) : mem x (cons y l) ↔ (x = y ∨ mem x l) := iff_refl _
