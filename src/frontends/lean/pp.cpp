@@ -199,20 +199,18 @@ expr pretty_fn::purify(expr const & e) {
 }
 
 void pretty_fn::set_options_core(options const & o) {
-    m_options         = o;
-    m_indent          = get_pp_indent(o);
-    m_max_depth       = get_pp_max_depth(o);
-    m_max_steps       = get_pp_max_steps(o);
-    m_implict         = get_pp_implicit(o);
-    m_unicode         = get_pp_unicode(o);
-    m_coercion        = get_pp_coercions(o);
-    m_notation        = get_pp_notation(o);
-    m_universes       = get_pp_universes(o);
-    m_full_names      = get_pp_full_names(o);
-    m_private_names   = get_pp_private_names(o);
-    m_metavar_args    = get_pp_metavar_args(o);
-    m_purify_metavars = get_pp_purify_metavars(o);
-    m_beta            = get_pp_beta(o);
+    m_options       = o;
+    m_indent        = get_pp_indent(o);
+    m_max_depth     = get_pp_max_depth(o);
+    m_max_steps     = get_pp_max_steps(o);
+    m_implict       = get_pp_implicit(o);
+    m_unicode       = get_pp_unicode(o);
+    m_coercion      = get_pp_coercion(o);
+    m_notation      = get_pp_notation(o);
+    m_universes     = get_pp_universes(o);
+    m_full_names    = get_pp_full_names(o);
+    m_private_names = get_pp_private_names(o);
+    m_metavar_args  = get_pp_metavar_args(o);
 }
 
 void pretty_fn::set_options(options const & o) {
@@ -973,18 +971,11 @@ auto pretty_fn::pp(expr const & e) -> result {
     flet<unsigned> let_d(m_depth, m_depth+1);
     m_num_steps++;
 
-    if (auto r = pp_notation(e))
-        return *r;
-
-    if (is_placeholder(e))  return result(*g_placeholder_fmt);
-    if (is_show(e))         return pp_show(e);
-    if (is_have(e))         return pp_have(e);
-    if (is_let(e))          return pp_let(e);
-    if (is_typed_expr(e))   return pp(get_typed_expr_expr(e));
-    if (is_let_value(e))    return pp(get_let_value_expr(e));
-    if (auto n = to_num(e)) return pp_num(*n);
-    if (!m_metavar_args && is_meta(e))
-        return pp_meta(get_app_fn(e));
+    if (is_placeholder(e)) return mk_result(g_placeholder_fmt);
+    if (is_show(e)) return pp_show(e);
+    if (is_let(e))  return pp_let(e);
+    if (is_have(e)) return pp_have(e);
+    if (!m_metavar_args && is_meta(e)) return pp_meta(get_app_fn(e));
 
     switch (e.kind()) {
     case expr_kind::Var:       return pp_var(e);

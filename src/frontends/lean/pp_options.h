@@ -24,8 +24,6 @@ bool     get_pp_universes(options const & opts);
 bool     get_pp_full_names(options const & opts);
 bool     get_pp_private_names(options const & opts);
 bool     get_pp_metavar_args(options const & opts);
-bool     get_pp_beta(options const & opts);
-bool     get_pp_purify_metavars(options const & opts);
 list<options> const & get_distinguishing_pp_options();
 
 void initialize_pp_options();

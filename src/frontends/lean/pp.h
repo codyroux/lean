@@ -49,20 +49,18 @@ private:
     name_map<name>      m_purify_local_table;
     name_set            m_purify_used_locals;
     // cached configuration
-    options             m_options;
-    unsigned            m_indent;
-    unsigned            m_max_depth;
-    unsigned            m_max_steps;
-    bool                m_implict;          //!< if true show implicit arguments
-    bool                m_unicode;          //!< if true use unicode chars
-    bool                m_coercion;         //!< if true show coercions
-    bool                m_notation;
-    bool                m_universes;
-    bool                m_full_names;
-    bool                m_private_names;
-    bool                m_metavar_args;
-    bool                m_purify_metavars;
-    bool                m_beta;
+    options            m_options;
+    unsigned           m_indent;
+    unsigned           m_max_depth;
+    unsigned           m_max_steps;
+    bool               m_implict;          //!< if true show implicit arguments
+    bool               m_unicode;          //!< if true use unicode chars
+    bool               m_coercion;         //!< if true show coercions
+    bool               m_notation;
+    bool               m_universes;
+    bool               m_full_names;
+    bool               m_private_names;
+    bool               m_metavar_args;
 
     name mk_metavar_name(name const & m);
     name mk_local_name(name const & n, name const & suggested);
