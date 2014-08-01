@@ -1,5 +1,5 @@
-import logic
-open bool
+import standard
+using bool
 
 constant list : Type.{1}
 constant nil  : list

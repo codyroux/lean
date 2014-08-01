@@ -1,5 +1,5 @@
-import logic data.bool
-open bool
+import standard
+using bool
 
 namespace set
 

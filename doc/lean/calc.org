@@ -25,8 +25,8 @@ Here is an example
 
 #+BEGIN_SRC lean
   import data.nat
-  open nat
-  constants a b c d e : nat.
+  using nat
+  variables a b c d e : nat.
   axiom Ax1 : a = b.
   axiom Ax2 : b = c + 1.
   axiom Ax3 : c = d.
@@ -46,14 +46,34 @@ We can use =by <tactic>= or =by <solver>= to (try to) automatically construct th
 proof expression using the given tactic or solver.
 
 Even when tactics and solvers are not used, we can still use the elaboration engine to fill
-gaps in our calculational proofs. The Lean elaboration engine infers them automatically for us.
+gaps in our calculational proofs. In the previous examples, we can use =_= as arguments for the
+=add_comm= theorem. The Lean elaboration engine will infer =d= and =1= for us.
+Here is the same example using placeholders.
+
+#+BEGIN_SRC lean
+  import data.nat
+  using nat
+  variables a b c d e : nat.
+  axiom Ax1 : a = b.
+  axiom Ax2 : b = c + 1.
+  axiom Ax3 : c = d.
+  axiom Ax4 : e = 1 + d.
+
+  theorem T : a = e
+  := calc a    =  b     : Ax1
+          ...  =  c + 1 : Ax2
+          ...  =  d + 1 : { Ax3 }
+          ...  =  1 + d : add_comm _ _
+          ...  =  e     : symm Ax4.
+
+#+END_SRC
 
 The =calc= command can be configured for any relation that supports
 some form of transitivity. It can even combine different relations.
 
 #+BEGIN_SRC lean
   import data.nat
-  open nat
+  using nat
 
   theorem T2 (a b c : nat) (H1 : a = b) (H2 : b = c + 1) : a ≠ 0
   := calc  a = b      : H1

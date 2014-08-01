@@ -1,5 +1,5 @@
-import logic
-open bool eq.ops tactic
+import standard
+using bool eq_proofs tactic
 
 constants a b c : bool
 axiom H1 : a = b

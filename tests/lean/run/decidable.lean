@@ -1,5 +1,5 @@
-import logic data.unit data.bool
-open bool unit decidable
+import standard data.unit
+using bool unit decidable
 
 constants a b c : bool
 constants u v : unit

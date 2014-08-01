@@ -1,5 +1,5 @@
-import logic algebra.function
-open function bool
+import standard
+using function num bool
 
 
 constant f : num → bool

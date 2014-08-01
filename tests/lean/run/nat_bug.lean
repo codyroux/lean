@@ -1,7 +1,6 @@
 import logic
-open decidable
-open eq
-namespace experiment
+using decidable
+
 inductive nat : Type :=
 zero : nat,
 succ : nat → nat

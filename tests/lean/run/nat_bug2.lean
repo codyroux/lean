@@ -1,6 +1,6 @@
-import logic
-open eq.ops
-namespace experiment
+import standard
+using num eq_proofs
+
 inductive nat : Type :=
 zero : nat,
 succ : nat → nat
