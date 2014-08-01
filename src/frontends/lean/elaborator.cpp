@@ -657,31 +657,26 @@ expr elaborator::visit_choice_app(expr const & e, constraint_seq & cs) {
     return visit_choice(copy_tag(e, mk_choice(new_choices.size(), new_choices.data())), none_expr(), cs);
 }
 
-expr elaborator::visit_app(expr const & e, constraint_seq & cs) {
-    if (is_choice_app(e))
-        return visit_choice_app(e, cs);
-    constraint_seq f_cs;
-    bool expl   = is_nested_explicit(get_app_fn(e));
-    expr f      = visit(app_fn(e), f_cs);
-    auto f_t    = ensure_fun(f, f_cs);
-    f           = f_t.first;
-    expr f_type = f_t.second;
-    lean_assert(is_pi(f_type));
-    if (!expl) {
-        bool first = true;
-        while (binding_info(f_type).is_strict_implicit() ||
-               (!first && binding_info(f_type).is_implicit()) ||
-               (!first && binding_info(f_type).is_inst_implicit())) {
-            tag g          = f.get_tag();
-            bool is_strict = true;
-            bool inst_imp  = binding_info(f_type).is_inst_implicit();
-            expr imp_arg   = mk_placeholder_meta(mk_mvar_suffix(f_type), some_expr(binding_domain(f_type)),
-                                                 g, is_strict, inst_imp, f_cs);
-            f              = mk_app(f, imp_arg, g);
-            auto f_t       = ensure_fun(f, f_cs);
-            f              = f_t.first;
-            f_type         = f_t.second;
-            first          = false;
+    expr visit_app(expr const & e) {
+        if (is_choice_app(e))
+            return visit_choice_app(e);
+        bool expl   = is_explicit(get_app_fn(e));
+        expr f      = visit(app_fn(e));
+        auto f_t    = ensure_fun(f);
+        f           = f_t.first;
+        expr f_type = f_t.second;
+        lean_assert(is_pi(f_type));
+        if (!expl) {
+            bool first = true;
+            while (binding_info(f_type).is_strict_implicit() || (!first && binding_info(f_type).is_implicit())) {
+                tag g        = f.get_tag();
+                expr imp_arg = mk_placeholder_meta(some_expr(binding_domain(f_type)), g);
+                f            = mk_app(f, imp_arg, g);
+                auto f_t     = ensure_fun(f);
+                f            = f_t.first;
+                f_type       = f_t.second;
+                first        = false;
+            }
         }
         if (!first) {
             // we save the info data again for application of functions with strict implicit arguments
