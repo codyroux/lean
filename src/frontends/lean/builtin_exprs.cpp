@@ -419,6 +419,10 @@ static expr parse_proof_qed(parser & p, unsigned, expr const *, pos_info const &
     return parse_proof_qed_core(p, pos);
 }
 
+static expr parse_sorry(parser & p, unsigned, expr const *, pos_info const & pos) {
+    return p.mk_sorry(pos);
+}
+
 parse_table init_nud_table() {
     action Expr(mk_expr_action());
     action Skip(mk_skip_action());
@@ -442,6 +446,7 @@ parse_table init_nud_table() {
     r = r.add({transition("begin", mk_ext_action_core(parse_begin_end))}, x0);
     r = r.add({transition("proof", mk_ext_action(parse_proof_qed))}, x0);
     r = r.add({transition("sorry", mk_ext_action(parse_sorry))}, x0);
+    r = r.add({transition("including", mk_ext_action(parse_including_expr))}, x0);
     return r;
 }
 

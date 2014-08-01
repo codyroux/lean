@@ -42,7 +42,7 @@ Author: Leonardo de Moura
 #include "frontends/lean/notation_cmd.h"
 #include "frontends/lean/elaborator.h"
 #include "frontends/lean/pp_options.h"
-#include "frontends/lean/info_annotation.h"
+#include "frontends/lean/sorry.h"
 
 #ifndef LEAN_DEFAULT_PARSER_SHOW_ERRORS
 #define LEAN_DEFAULT_PARSER_SHOW_ERRORS true
@@ -127,62 +127,13 @@ parser::~parser() {
     } catch (...) {}
 }
 
-void parser::cache_definition(name const & n, expr const & pre_type, expr const & pre_value,
-                              level_param_names const & ls, expr const & type, expr const & value) {
-    if (m_cache)
-        m_cache->add(m_env, n, pre_type, pre_value, ls, type, value);
-}
-
-auto parser::find_cached_definition(name const & n, expr const & pre_type, expr const & pre_value)
--> optional<std::tuple<level_param_names, expr, expr>> {
-    if (m_cache)
-        return m_cache->find(m_env, n, pre_type, pre_value);
-    else
-        return optional<std::tuple<level_param_names, expr, expr>>();
-}
-
-void parser::add_decl_index(name const & n, pos_info const & pos, name const & k, expr const & t) {
-    if (m_index)
-        m_index->add_decl(get_stream_name(), pos, n, k, t);
-}
-
-void parser::add_ref_index(name const & n, pos_info const & pos) {
-    if (m_index)
-        m_index->add_ref(get_stream_name(), pos, n);
-}
-
-void parser::add_abbrev_index(name const & a, name const & d) {
-    if (m_index)
-        m_index->add_abbrev(a, d);
-}
-
-bool parser::are_info_lines_valid(unsigned start_line, unsigned end_line) const {
-    if (!m_info_manager)
-        return true; // we are not tracking info
-    for (unsigned i = start_line; i <= end_line; i++)
-        if (m_info_manager->is_invalidated(i))
-            return false;
-    return true;
-}
-
-void parser::remove_proof_state_info(pos_info const & start, pos_info const & end) {
-    if (m_info_manager)
-        m_info_manager->remove_proof_state_info(start.first, start.second, end.first, end.second);
-}
-
 expr parser::mk_sorry(pos_info const & p) {
     m_used_sorry = true;
     {
-#ifndef LEAN_IGNORE_SORRY
-        // TODO(Leo): remove the #ifdef.
-        // The compilation option LEAN_IGNORE_SORRY is a temporary hack for the nightly builds
-        // We use it to avoid a buch of warnings on cdash.
         flycheck_warning wrn(regular_stream());
-        display_warning_pos(p.first, p.second);
-        regular_stream() << " using 'sorry'" << endl;
-#endif
+        regular_stream() << get_stream_name() << ":" << p.first << ":" << p.second << ": warning using 'sorry'" << endl;
     }
-    return save_pos(::lean::mk_sorry(), p);
+    return get_sorry_constant();
 }
 
 void parser::declare_sorry() {

@@ -104,7 +104,7 @@ class parser {
     unsigned                m_next_tag_idx;
     bool                    m_found_errors;
     bool                    m_used_sorry;
-    pos_info_table          m_pos_table;
+    pos_info_table_ptr      m_pos_table;
     // By default, when the parser finds a unknown identifier, it signs an error.
     // When the following flag is true, it creates a constant.
     // This flag is when we are trying to parse mutually recursive declarations.

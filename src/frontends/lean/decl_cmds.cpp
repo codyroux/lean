@@ -299,30 +299,9 @@ struct decl_modifiers {
     }
 };
 
-static void check_end_of_theorem(parser const & p) {
-    if (!p.curr_is_command_like())
-        throw parser_error("':=', '.', command, script, or end-of-file expected", p.pos());
-}
-
-static void erase_local_binder_info(buffer<expr> & ps) {
-    for (expr & p : ps)
-        p = update_local(p, binder_info());
-}
-
-// An Lean example is not really a definition, but we use the definition infrastructure to simulate it.
-enum def_cmd_kind { Theorem, Definition, Example };
-
-static environment definition_cmd_core(parser & p, def_cmd_kind kind, bool is_opaque, bool is_private, bool is_protected) {
-    bool is_definition = kind == Definition;
-    lean_assert(!(!is_definition && !is_opaque));
-    lean_assert(!(is_private && is_protected));
-    auto n_pos = p.pos();
-    unsigned start_line = n_pos.first;
-    name n;
-    if (kind == Example)
-        n = p.mk_fresh_name();
-    else
-        n = p.check_id_next("invalid declaration, identifier expected");
+environment definition_cmd_core(parser & p, bool is_theorem, bool _is_opaque) {
+    name n = p.check_id_next("invalid declaration, identifier expected");
+    check_atomic(n);
     decl_modifiers modifiers;
     name real_n; // real name for this declaration
     buffer<name> ls_buffer;
@@ -335,6 +314,8 @@ static environment definition_cmd_core(parser & p, def_cmd_kind kind, bool is_op
 
         // Parse modifiers
         modifiers.parse(p);
+        if (is_theorem && !modifiers.m_is_opaque)
+            throw exception("invalid theorem declaration, theorems cannot be transparent");
 
         if (p.curr_is_token(get_assign_tk())) {
             auto pos = p.pos();
@@ -383,14 +364,16 @@ static environment definition_cmd_core(parser & p, def_cmd_kind kind, bool is_op
             erase_local_binder_info(ps);
             value = Fun(ps, value, p);
         }
+
+        update_univ_parameters(ls_buffer, collect_univ_params(value, collect_univ_params(type)), p);
+        ls = to_list(ls_buffer.begin(), ls_buffer.end());
     }
-    unsigned end_line = p.pos().first;
 
     if (p.used_sorry())
         p.declare_sorry();
     environment env = p.env();
 
-    if (is_private) {
+    if (modifiers.m_is_private) {
         auto env_n = add_private_name(env, n, optional<unsigned>(hash(p.pos().first, p.pos().second)));
         env    = env_n.first;
         real_n = env_n.second;
@@ -399,32 +382,17 @@ static environment definition_cmd_core(parser & p, def_cmd_kind kind, bool is_op
         real_n     = ns + n;
     }
 
-    if (p.has_locals()) {
-        buffer<expr> locals;
-        collect_locals(type, value, p, locals);
-        type = Pi_as_is(locals, type, p);
-        buffer<expr> new_locals;
-        new_locals.append(locals);
-        erase_local_binder_info(new_locals);
-        value = Fun_as_is(new_locals, value, p);
-        update_univ_parameters(ls_buffer, collect_univ_params(value, collect_univ_params(type)), p);
-        remove_local_vars(p, locals);
-        ls = to_list(ls_buffer.begin(), ls_buffer.end());
-        levels local_ls = collect_local_nonvar_levels(p, ls);
-        local_ls = remove_local_vars(p, local_ls);
-        if (!locals.empty()) {
-            expr ref = mk_local_ref(real_n, local_ls, locals);
-            p.add_local_expr(n, ref);
-        } else if (local_ls) {
-            expr ref = mk_constant(real_n, local_ls);
-            p.add_local_expr(n, ref);
-        }
-    } else {
-        update_univ_parameters(ls_buffer, collect_univ_params(value, collect_univ_params(type)), p);
-        ls = to_list(ls_buffer.begin(), ls_buffer.end());
+    if (in_section(env)) {
+        buffer<expr> section_ps;
+        collect_section_locals(type, value, p, section_ps);
+        type = Pi_as_is(section_ps, type, p);
+        value = Fun_as_is(section_ps, value, p);
+        levels section_ls = collect_section_levels(ls, p);
+        for (expr & p : section_ps)
+            p = mk_explicit(p);
+        expr ref = mk_implicit(mk_app(mk_explicit(mk_constant(real_n, section_ls)), section_ps));
+        p.add_local_expr(n, ref);
     }
-    expr pre_type  = type;
-    expr pre_value = value;
     level_param_names new_ls;
     bool found_cached = false;
     // We don't cache examples
