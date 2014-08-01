@@ -104,8 +104,7 @@ static void display_help(std::ostream & out) {
 #endif
     std::cout << "  --deps            just print dependencies of a Lean input\n";
     std::cout << "  --flycheck        print structured error message for flycheck\n";
-    std::cout << "  --cache=file -c   load/save cached definitions from/to the given file\n";
-    std::cout << "  --index=file -i   store index for declared symbols in the given file\n";
+    std::cout << "  --flyinfo         print structured typing information for editor\n";
 #if defined(LEAN_USE_BOOST)
     std::cout << "  --tstack=num -s   thread stack size in Kb\n";
 #endif
@@ -127,42 +126,32 @@ static char const * get_file_extension(char const * fname) {
 }
 
 static struct option g_long_options[] = {
-    {"version",      no_argument,       0, 'v'},
-    {"help",         no_argument,       0, 'h'},
-    {"lean",         no_argument,       0, 'l'},
-    {"lua",          no_argument,       0, 'u'},
-    {"server-trace", no_argument,       0, 'R'},
-    {"path",         no_argument,       0, 'p'},
-    {"luahook",      required_argument, 0, 'k'},
-    {"githash",      no_argument,       0, 'g'},
-    {"output",       required_argument, 0, 'o'},
-    {"cpp",          required_argument, 0, 'C'},
-    {"trust",        required_argument, 0, 't'},
-    {"discard",      no_argument,       0, 'T'},
-    {"to_axiom",     no_argument,       0, 'X'},
-#if defined(LEAN_MULTI_THREAD)
-    {"server",       no_argument,       0, 'S'},
-    {"threads",      required_argument, 0, 'j'},
-#endif
-    {"quiet",        no_argument,       0, 'q'},
-    {"cache",        required_argument, 0, 'c'},
-    {"deps",         no_argument,       0, 'd'},
-    {"flycheck",     no_argument,       0, 'F'},
-    {"index",        no_argument,       0, 'i'},
+    {"version",     no_argument,       0, 'v'},
+    {"help",        no_argument,       0, 'h'},
+    {"lean",        no_argument,       0, 'l'},
+    {"lua",         no_argument,       0, 'u'},
+    {"path",        no_argument,       0, 'p'},
+    {"luahook",     required_argument, 0, 'c'},
+    {"githash",     no_argument,       0, 'g'},
+    {"output",      required_argument, 0, 'o'},
+    {"trust",       required_argument, 0, 't'},
+    {"interactive", no_argument,       0, 'i'},
+    {"quiet",       no_argument,       0, 'q'},
+    {"hott",        no_argument,       0, 'H'},
+    {"threads",     required_argument, 0, 'j'},
+    {"deps",        no_argument,       0, 'D'},
+    {"flycheck",    no_argument,       0, 'F'},
+    {"flyinfo",     no_argument,       0, 'I'},
 #if defined(LEAN_USE_BOOST)
     {"tstack",       required_argument, 0, 's'},
 #endif
     {0, 0, 0, 0}
 };
 
-#define BASIC_OPT_STR "RXTFC:dD:qlupgvhk:012t:012o:c:i:"
-
-#if defined(LEAN_USE_BOOST) && defined(LEAN_MULTI_THREAD)
-static char const * g_opt_str = BASIC_OPT_STR "Sj:012s:012";
-#elif !defined(LEAN_USE_BOOST) && defined(LEAN_MULTI_THREAD)
-static char const * g_opt_str = BASIC_OPT_STR "Sj:012";
+#if defined(LEAN_USE_BOOST)
+static char const * g_opt_str = "IFDHiqlupgvhj:012c:012s:012t:012o:";
 #else
-static char const * g_opt_str = BASIC_OPT_STR;
+static char const * g_opt_str = "IFDHiqlupgvhj:012c:012t:012o:";
 #endif
 
 class simple_pos_info_provider : public pos_info_provider {
@@ -312,17 +301,17 @@ int main() {
 
 #else
 int main(int argc, char ** argv) {
-    lean::initializer init;
-    bool export_objects     = false;
-    unsigned trust_lvl      = 0;
-    bool server             = false;
-    bool only_deps          = false;
-    unsigned num_threads    = 1;
-    bool use_cache          = false;
-    bool gen_index          = false;
-    bool export_cpp         = false;
-    keep_theorem_mode tmode = keep_theorem_mode::All;
-    options opts;
+    lean::save_stack_info();
+    lean::register_modules();
+    bool export_objects  = false;
+    unsigned trust_lvl   = 0;
+    bool quiet           = false;
+    bool interactive     = false;
+    bool only_deps       = false;
+    bool flycheck        = false;
+    bool flyinfo         = false;
+    lean_mode mode       = lean_mode::Standard;
+    unsigned num_threads = 1;
     std::string output;
     std::string cpp_output;
     std::string cache_name;
@@ -405,7 +394,10 @@ int main(int argc, char ** argv) {
             }
             break;
         case 'F':
-            opts = opts.update("flycheck", true);
+            flycheck = true;
+            break;
+        case 'I':
+            flyinfo = true;
             break;
         default:
             std::cerr << "Unknown command line option\n";
@@ -414,13 +406,14 @@ int main(int argc, char ** argv) {
         }
     }
 
-    #if !defined(LEAN_MULTI_THREAD)
-    lean_assert(!server);
-    lean_assert(num_threads == 1);
-    #endif
-
-    environment env = mk_environment(trust_lvl);
-    io_state ios(opts, lean::mk_pretty_formatter_factory());
+    environment env = mode == lean_mode::Standard ? mk_environment(trust_lvl) : mk_hott_environment(trust_lvl);
+    io_state ios(lean::mk_pretty_formatter_factory());
+    if (quiet)
+        ios.set_option("verbose", false);
+    if (flycheck)
+        ios.set_option("flycheck", true);
+    if (flyinfo)
+        ios.set_option("flyinfo", true);
     script_state S = lean::get_thread_script_state();
     set_environment set1(S, env);
     set_io_state    set2(S, ios);

@@ -24,12 +24,8 @@ Author: Leonardo de Moura
 #include "library/explicit.h"
 #include "library/reducible.h"
 #include "library/locals.h"
-#include "library/let.h"
-#include "library/sorry.h"
-#include "library/flycheck.h"
 #include "library/deep_copy.h"
-#include "library/metavar_closure.h"
-#include "library/typed_expr.h"
+#include "library/tactic/tactic.h"
 #include "library/tactic/expr_to_tactic.h"
 #include "library/error_handling/error_handling.h"
 #include "frontends/lean/local_decls.h"
@@ -90,20 +86,110 @@ struct elaborator::choice_expr_elaborator : public choice_iterator {
     }
 };
 
-elaborator::elaborator(elaborator_context & ctx, name_generator const & ngen, bool nice_mvar_names):
-    m_ctx(ctx),
-    m_ngen(ngen),
-    m_context(),
-    m_full_context(),
-    m_unifier_config(ctx.m_ios.get_options(), true /* use exceptions */, true /* discard */) {
-    m_has_sorry = has_sorry(m_ctx.m_env);
-    m_relax_main_opaque = false;
-    m_use_tactic_hints  = true;
-    m_no_info = false;
-    m_tc[0]  = mk_type_checker(ctx.m_env, m_ngen.mk_child(), false);
-    m_tc[1]  = mk_type_checker(ctx.m_env, m_ngen.mk_child(), true);
-    m_nice_mvar_names = nice_mvar_names;
-}
+/** \brief Helper class for implementing the \c elaborate functions. */
+class elaborator {
+    typedef list<expr> context;
+    typedef std::vector<constraint> constraint_vect;
+    typedef name_map<expr> local_tactic_hints;
+    typedef name_map<expr> mvar2meta;
+    typedef std::unique_ptr<type_checker> type_checker_ptr;
+
+    environment         m_env;
+    local_decls<level>  m_lls;
+    io_state            m_ios;
+    name_generator      m_ngen;
+    type_checker_ptr    m_tc[2];
+    substitution        m_subst;
+    expr_map<expr>      m_cache; // (pointer equality) cache for Type and Constants (this is a trick to make sure we get the
+                                 // same universe metavariable for different occurrences of the same Type/Constant
+    context             m_ctx; // current local context: a list of local constants
+    buffer<expr>        m_ctx_buffer; // m_ctx as a buffer
+    buffer<expr>        m_ctx_domain_buffer; // m_ctx_domain_buffer[i] == abstract_locals(m_ctx_buffer[i], i, m_ctx_buffer.begin())
+    pos_info_provider * m_pos_provider; // optional expression position information used when reporting errors.
+    justification       m_accumulated; // accumulate justification of eagerly used substitutions
+    constraint_vect     m_constraints; // constraints that must be solved for the elaborated term to be type correct.
+    local_tactic_hints  m_local_tactic_hints; // mapping from metavariable name ?m to tactic expression that should be used to solve it.
+                                              // this mapping is populated by the 'by tactic-expr' expression.
+    mvar2meta           m_mvar2meta; // mapping from metavariable ?m to the (?m l_1 ... l_n) where [l_1 ... l_n] are the local constants
+                                     // representing the context where ?m was created.
+    name_set            m_displayed_errors; // set of metavariables that we already reported unsolved/unassigned
+    bool                m_check_unassigned; // if true if display error messages if elaborated term still contains metavariables
+    bool                m_use_local_instances; // if true class-instance resolution will use the local context
+    bool                m_relax_main_opaque; // if true, then treat opaque definitions from the main module as transparent
+    bool                m_flyinfo;
+    typedef std::pair<pos_info, expr> flyinfo_data;
+    std::vector<flyinfo_data> m_flyinfo_data;
+
+    // Set m_ctx to ctx, and make sure m_ctx_buffer and m_ctx_domain_buffer reflect the contents of the new ctx
+    void set_ctx(context const & ctx) {
+        m_ctx = ctx;
+        m_ctx_buffer.clear();
+        m_ctx_domain_buffer.clear();
+        to_buffer(ctx, m_ctx_buffer);
+        std::reverse(m_ctx_buffer.begin(), m_ctx_buffer.end());
+        for (unsigned i = 0; i < m_ctx_buffer.size(); i++) {
+            m_ctx_domain_buffer.push_back(abstract_locals(m_ctx_buffer[i], i, m_ctx_buffer.data()));
+        }
+    }
+
+    /** \brief Auxiliary object for creating backtracking points.
+        \remark A scope can only be created when m_constraints and m_subst are empty,
+        and m_accumulated is none.
+    */
+    struct scope {
+        elaborator & m_main;
+        context      m_old_ctx;
+        scope(elaborator & e, context const & ctx, substitution const & s):m_main(e) {
+            lean_assert(m_main.m_constraints.empty());
+            lean_assert(m_main.m_accumulated.is_none());
+            m_old_ctx    = m_main.m_ctx;
+            m_main.set_ctx(ctx);
+            m_main.m_tc[0]->push();
+            m_main.m_tc[1]->push();
+            m_main.m_subst = s;
+        }
+        ~scope() {
+            m_main.set_ctx(m_old_ctx);
+            m_main.m_tc[0]->pop();
+            m_main.m_tc[1]->pop();
+            m_main.m_constraints.clear();
+            m_main.m_accumulated = justification();
+            m_main.m_subst = substitution();
+            lean_assert(m_main.m_constraints.empty());
+            lean_assert(m_main.m_accumulated.is_none());
+        }
+    };
+
+    /* \brief Move all constraints generated by the type checker to the buffer m_constraints. */
+    void consume_tc_cnstrs() {
+        for (unsigned i = 0; i < 2; i++)
+            while (auto c = m_tc[i]->next_cnstr())
+                m_constraints.push_back(*c);
+    }
+
+    struct choice_elaborator {
+        bool m_ignore_failure;
+        choice_elaborator(bool ignore_failure = false):m_ignore_failure(ignore_failure) {}
+        virtual optional<constraints> next() = 0;
+    };
+
+    /** \brief 'Choice' expressions <tt>(choice e_1 ... e_n)</tt> are mapped into a metavariable \c ?m
+        and a choice constraints <tt>(?m in fn)</tt> where \c fn is a choice function.
+        The choice function produces a stream of alternatives. In this case, it produces a stream of
+        size \c n, one alternative for each \c e_i.
+        This is a helper class for implementing this choice functions.
+    */
+    struct choice_expr_elaborator : public choice_elaborator {
+        elaborator & m_elab;
+        expr         m_mvar;
+        expr         m_choice;
+        context      m_ctx;
+        substitution m_subst;
+        unsigned     m_idx;
+        bool         m_relax_main_opaque;
+        choice_expr_elaborator(elaborator & elab, expr const & mvar, expr const & c, context const & ctx, substitution const & s, bool relax):
+            m_elab(elab), m_mvar(mvar), m_choice(c), m_ctx(ctx), m_subst(s), m_idx(0), m_relax_main_opaque(relax) {
+        }
 
 expr elaborator::mk_local(name const & n, expr const & t, binder_info const & bi) {
     return ::lean::mk_local(m_ngen.next(), n, t, bi);
@@ -150,13 +236,19 @@ void elaborator::save_binder_type(expr const & e, expr const & r) {
     }
 }
 
-/** \brief Store type information at pos(e) for r if \c e is marked as "extra" in the info_manager */
-void elaborator::save_extra_type_data(expr const & e, expr const & r) {
-    if (!m_no_info && infom() && pip()) {
-        if (auto p = pip()->get_pos_info(e)) {
-            expr t = m_tc[m_relax_main_opaque]->infer(r).first;
-            m_pre_info_data.add_extra_type_info(p->first, p->second, r, t);
-        }
+public:
+    elaborator(environment const & env, local_decls<level> const & lls, list<expr> const & ctx, io_state const & ios, name_generator const & ngen,
+               pos_info_provider * pp, bool check_unassigned):
+        m_env(env), m_lls(lls), m_ios(ios),
+        m_ngen(ngen),
+        m_pos_provider(pp) {
+        m_relax_main_opaque = false;
+        m_tc[0] = mk_type_checker_with_hints(env, m_ngen.mk_child(), false);
+        m_tc[1] = mk_type_checker_with_hints(env, m_ngen.mk_child(), true);
+        m_check_unassigned = check_unassigned;
+        m_use_local_instances = get_elaborator_local_instances(ios.get_options());
+        m_flyinfo = ios.get_options().get_bool("flyinfo", false);
+        set_ctx(ctx);
     }
 }
 
@@ -650,14 +742,37 @@ expr elaborator::visit_sort(expr const & e) {
     return r;
 }
 
-expr elaborator::visit_macro(expr const & e, constraint_seq & cs) {
-    if (is_as_is(e)) {
-        return get_as_is_arg(e);
-    } else {
-        buffer<expr> args;
-        for (unsigned i = 0; i < macro_num_args(e); i++)
-            args.push_back(visit(macro_arg(e, i), cs));
-        return update_macro(e, args.size(), args.data());
+    /** \brief Store the pair (pos(e), type(r)) in the flyinfo_data if m_flyinfo is true. */
+    void save_flyinfo_data(expr const & e, expr const & r) {
+        if (m_flyinfo && m_pos_provider) {
+            auto p = m_pos_provider->get_pos_info(e);
+            type_checker::scope scope(*m_tc[m_relax_main_opaque]);
+            expr t = m_tc[m_relax_main_opaque]->infer(r);
+            m_flyinfo_data.push_back(mk_pair(p, t));
+        }
+    }
+
+    expr visit_constant(expr const & e) {
+        auto it = m_cache.find(e);
+        if (it != m_cache.end()) {
+            return it->second;
+        } else {
+            declaration d = m_env.get(const_name(e));
+            buffer<level> ls;
+            for (level const & l : const_levels(e))
+                ls.push_back(replace_univ_placeholder(l));
+            unsigned num_univ_params = length(d.get_univ_params());
+            if (num_univ_params < ls.size())
+                throw_kernel_exception(m_env, sstream() << "incorrect number of universe levels parameters for '" << const_name(e) << "', #"
+                                       << num_univ_params << " expected, #" << ls.size() << " provided");
+            // "fill" with meta universe parameters
+            for (unsigned i = ls.size(); i < num_univ_params; i++)
+                ls.push_back(mk_meta_univ(m_ngen.next()));
+            lean_assert(num_univ_params == ls.size());
+            expr r = update_constant(e, to_list(ls.begin(), ls.end()));
+            m_cache.insert(mk_pair(e, r));
+            return r;
+        }
     }
 }
 
@@ -801,57 +916,55 @@ expr elaborator::visit_let_value(expr const & e, constraint_seq & cs) {
     }
 }
 
-bool elaborator::is_sorry(expr const & e) const {
-    return m_has_sorry && ::lean::is_sorry(e);
-}
+    /** \brief Similar to instantiate_rev, but assumes that subst contains only local constants.
+        When replacing a variable with a local, we copy the local constant and inherit the tag
+        associated with the variable. This is a trick for getter better error messages */
+    expr instantiate_rev_locals(expr const & a, unsigned n, expr const * subst) {
+        if (closed(a))
+            return a;
+        return replace(a, [=](expr const & m, unsigned offset) -> optional<expr> {
+                if (offset >= get_free_var_range(m))
+                    return some_expr(m); // expression m does not contain free variables with idx >= offset
+                if (is_var(m)) {
+                    unsigned vidx = var_idx(m);
+                    if (vidx >= offset) {
+                        unsigned h = offset + n;
+                        if (h < offset /* overflow, h is bigger than any vidx */ || vidx < h) {
+                            expr local = subst[n - (vidx - offset) - 1];
+                            lean_assert(is_local(local));
+                            return some_expr(copy_tag(m, copy(local)));
+                        } else {
+                            return some_expr(copy_tag(m, mk_var(vidx - n)));
+                        }
+                    }
+                }
+                return none_expr();
+            });
+    }
 
-expr elaborator::visit_sorry(expr const & e) {
-    level u = mk_meta_univ(m_ngen.next());
-    expr t  = mk_sort(u);
-    expr m  = m_full_context.mk_meta(m_ngen, some_expr(t), e.get_tag());
-    return mk_app(update_constant(e, to_list(u)), m, e.get_tag());
-}
-
-expr elaborator::visit_core(expr const & e, constraint_seq & cs) {
-    if (is_placeholder(e)) {
-        return visit_placeholder(e, cs);
-    } else if (is_choice(e)) {
-        return visit_choice(e, none_expr(), cs);
-    } else if (is_let_value(e)) {
-        return visit_let_value(e, cs);
-    } else if (is_by(e)) {
-        return visit_by(e, none_expr(), cs);
-    } else if (is_calc_annotation(e)) {
-        return visit_calc_proof(e, none_expr(), cs);
-    } else if (is_proof_qed_annotation(e)) {
-        return visit_proof_qed(e, none_expr(), cs);
-    } else if (is_no_info(e)) {
-        flet<bool> let(m_no_info, true);
-        return visit(get_annotation_arg(e), cs);
-    } else if (is_typed_expr(e)) {
-        return visit_typed_expr(e, cs);
-    } else if (is_as_atomic(e)) {
-        // ignore annotation
-        return visit_core(get_as_atomic_arg(e), cs);
-    } else if (is_consume_args(e)) {
-        // ignore annotation
-        return visit_core(get_consume_args_arg(e), cs);
-    } else if (is_explicit(e)) {
-        // ignore annotation
-        return visit_core(get_explicit_arg(e), cs);
-    } else if (is_sorry(e)) {
-        return visit_sorry(e);
-    } else {
-        switch (e.kind()) {
-        case expr_kind::Local:      return e;
-        case expr_kind::Meta:       return e;
-        case expr_kind::Sort:       return visit_sort(e);
-        case expr_kind::Var:        lean_unreachable();  // LCOV_EXCL_LINE
-        case expr_kind::Constant:   return visit_constant(e);
-        case expr_kind::Macro:      return visit_macro(e, cs);
-        case expr_kind::Lambda:     return visit_lambda(e, cs);
-        case expr_kind::Pi:         return visit_pi(e, cs);
-        case expr_kind::App:        return visit_app(e, cs);
+    expr visit_binding(expr e, expr_kind k) {
+        scope_ctx scope(*this);
+        buffer<expr> ds, ls, es;
+        while (e.kind() == k) {
+            es.push_back(e);
+            expr d   = binding_domain(e);
+            d = instantiate_rev_locals(d, ls.size(), ls.data());
+            d = ensure_type(visit_expecting_type(d));
+            ds.push_back(d);
+            expr l   = mk_local(binding_name(e), d, binding_info(e));
+            if (binding_info(e).is_contextual())
+                add_local(l);
+            ls.push_back(l);
+            e = binding_body(e);
+        }
+        lean_assert(ls.size() == es.size() && ls.size() == ds.size());
+        e = instantiate_rev_locals(e, ls.size(), ls.data());
+        e = (k == expr_kind::Pi) ? ensure_type(visit_expecting_type(e)) : visit(e);
+        e = abstract_locals(e, ls.size(), ls.data());
+        unsigned i = ls.size();
+        while (i > 0) {
+            --i;
+            e = update_binding(es[i], abstract_locals(ds[i], i, ls.data()), e);
         }
         lean_unreachable(); // LCOV_EXCL_LINE
     }
@@ -918,6 +1031,9 @@ pair<expr, constraint_seq> elaborator::visit(expr const & e) {
             r       = mk_app(r, imp_arg, g);
             r_type  = whnf(instantiate(binding_body(r_type), imp_arg), cs);
         }
+        if (is_constant(e) || is_local(e))
+            save_flyinfo_data(e, r);
+        return r;
     }
     save_type_data(b, r);
     return mk_pair(r, cs);
@@ -1209,76 +1325,52 @@ auto elaborator::operator()(list<expr> const & ctx, expr const & e, bool _ensure
     return result;
 }
 
-std::tuple<expr, expr, level_param_names> elaborator::operator()(
-    expr const & t, expr const & v, name const & n, bool is_opaque) {
-    constraint_seq t_cs;
-    expr r_t      = ensure_type(visit(t, t_cs), t_cs);
-    // Opaque definitions in the main module may treat other opaque definitions (in the main module) as transparent.
-    flet<bool> set_relax(m_relax_main_opaque, is_opaque);
-    constraint_seq v_cs;
-    expr r_v      = visit(v, v_cs);
-    expr r_v_type = infer_type(r_v, v_cs);
-    justification j = mk_justification(r_v, [=](formatter const & fmt, substitution const & subst) {
-            substitution s(subst);
-            return pp_def_type_mismatch(fmt, n, s.instantiate(r_t), s.instantiate(r_v_type));
-        });
-    pair<expr, constraint_seq> r_v_cs = ensure_has_type(r_v, r_v_type, r_t, j, is_opaque);
-    r_v = r_v_cs.first;
-    constraint_seq cs = t_cs + r_v_cs.second + v_cs;
-    auto p  = solve(cs).pull();
-    lean_assert(p);
-    substitution s = p->first.first;
-    name_set univ_params = collect_univ_params(r_v, collect_univ_params(r_t));
-    buffer<name> new_params;
-    expr new_r_t = apply(s, r_t, univ_params, new_params);
-    expr new_r_v = apply(s, r_v, univ_params, new_params);
-    check_sort_assignments(s);
-    copy_info_to_manager(s);
-    return std::make_tuple(new_r_t, new_r_v, to_list(new_params.begin(), new_params.end()));
-}
+    void display_flyinfo(substitution const & _s) {
+        substitution s = _s;
+        for (auto p : m_flyinfo_data) {
+            auto out = regular(m_env, m_ios);
+            flyinfo_scope info(out);
+            out << m_pos_provider->get_file_name() << ":" << p.first.first << ":" << p.first.second << ": type\n";
+            out << s.instantiate(p.second) << endl;
+        }
+    }
 
-// Auxiliary procedure for #translate
-static expr translate_local_name(environment const & env, list<expr> const & ctx, name const & local_name,
-                                 expr const & src) {
-    for (expr const & local : ctx) {
-        if (local_pp_name(local) == local_name)
-            return copy(local);
+    std::tuple<expr, level_param_names> operator()(expr const & e, bool _ensure_type, bool relax_main_opaque) {
+        flet<bool> set_relax(m_relax_main_opaque, relax_main_opaque && !get_hide_main_opaque(m_env));
+        expr r  = visit(e);
+        if (_ensure_type)
+            r = ensure_type(r);
+        auto p  = solve().pull();
+        lean_assert(p);
+        substitution s = p->first;
+        auto result = apply(s, r);
+        display_flyinfo(s);
+        return result;
     }
     throw_elaborator_exception(env, sstream() << "unknown identifier '" << local_name << "'", src);
 }
 
-/** \brief Translated local constants (and undefined constants) occurring in \c e into
-    local constants provided by \c ctx.
-    Throw exception is \c ctx does not contain the local constant.
-*/
-static expr translate(environment const & env, list<expr> const & ctx, expr const & e) {
-    auto fn = [&](expr const & e) {
-        if (is_placeholder(e) || is_by(e)) {
-            return some_expr(e); // ignore placeholders
-        } else if (is_constant(e)) {
-            if (!env.find(const_name(e))) {
-                expr new_e = copy_tag(e, translate_local_name(env, ctx, const_name(e), e));
-                return some_expr(new_e);
-            } else {
-                return none_expr();
-            }
-        } else if (is_local(e)) {
-            expr new_e = copy_tag(e, translate_local_name(env, ctx, local_pp_name(e), e));
-            return some_expr(new_e);
-        } else {
-            return none_expr();
-        }
-    };
-    return replace(e, fn);
-}
-
-/** \brief Elaborate expression \c e in context \c ctx. */
-pair<expr, constraints> elaborator::elaborate_nested(list<expr> const & ctx, expr const & n,
-                                                     bool relax, bool use_tactic_hints) {
-    if (infom()) {
-        if (auto ps = get_info_tactic_proof_state()) {
-            save_proof_state_info(*ps, n);
-        }
+    std::tuple<expr, expr, level_param_names> operator()(expr const & t, expr const & v, name const & n, bool is_opaque) {
+        lean_assert(!has_local(t)); lean_assert(!has_local(v));
+        expr r_t      = ensure_type(visit(t));
+        // Opaque definitions in the main module may treat other opaque definitions (in the main module) as transparent.
+        flet<bool> set_relax(m_relax_main_opaque, is_opaque && !get_hide_main_opaque(m_env));
+        expr r_v      = visit(v);
+        expr r_v_type = infer_type(r_v);
+        justification j = mk_justification(r_v, [=](formatter const & fmt, substitution const & subst) {
+                substitution s(subst);
+                return pp_def_type_mismatch(fmt, n, s.instantiate(r_t), s.instantiate(r_v_type));
+            });
+        r_v = ensure_type(r_v, r_v_type, r_t, j, is_opaque);
+        auto p  = solve().pull();
+        lean_assert(p);
+        substitution s = p->first;
+        name_set univ_params = collect_univ_params(r_v, collect_univ_params(r_t));
+        buffer<name> new_params;
+        expr new_r_t = apply(s, r_t, univ_params, new_params);
+        expr new_r_v = apply(s, r_v, univ_params, new_params);
+        display_flyinfo(s);
+        return std::make_tuple(new_r_t, new_r_v, to_list(new_params.begin(), new_params.end()));
     }
     expr e = translate(env(), ctx, n);
     m_context.set_ctx(ctx);
