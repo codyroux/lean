@@ -376,19 +376,11 @@ else()
 endif()
 
 add_custom_target(clean-olean
+   WORKING_DIRECTORY ${LEAN_SOURCE_DIR}/../library
+   COMMAND find . -name '*.olean' -exec rm -f '{}' '\;'
+   )
+
+add_custom_target(clean-d
   WORKING_DIRECTORY ${LEAN_SOURCE_DIR}/../library
-  COMMAND ${CMAKE_COMMAND} -P ${CMAKE_MODULE_PATH}CleanOlean.cmake
+  COMMAND find . -name '*.d' -exec rm -f '{}' '\;'
   )
-
-install(FILES ${CMAKE_SOURCE_DIR}/../bin/linja ${CMAKE_SOURCE_DIR}/../bin/ltags
-  DESTINATION bin
-  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/../library DESTINATION ${LIBRARY_DIR}
-        FILES_MATCHING PATTERN "*.lean")
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/../library DESTINATION ${LIBRARY_DIR}
-        FILES_MATCHING
-        PATTERN "*.lean"
-        PATTERN "*.olean"
-        PATTERN ".project"
-        PATTERN "TAGS")
