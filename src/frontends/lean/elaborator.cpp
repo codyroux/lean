@@ -946,15 +946,15 @@ void elaborator::display_unsolved_proof_state(expr const & mvar, proof_state con
     }
 }
 
-void elaborator::display_unsolved_proof_state(expr const & mvar, proof_state const & ps, char const * msg) {
-    display_unsolved_proof_state(mvar, ps, msg, mvar);
-}
-
-optional<expr> elaborator::get_pre_tactic_for(expr const & mvar) {
-    if (auto it = m_local_tactic_hints.find(mlocal_name(mvar))) {
-        return some_expr(*it);
-    } else {
-        return none_expr();
+    void display_unsolved_proof_state(expr const & mvar, proof_state const & ps, char const * msg) {
+        lean_assert(is_metavar(mvar));
+        if (!m_displayed_errors.contains(mlocal_name(mvar))) {
+            m_displayed_errors.insert(mlocal_name(mvar));
+            auto out = regular(m_env, m_ios);
+            flycheck_error err(out);
+            display_error_pos(out, m_pos_provider, mvar);
+            out << " unsolved placeholder, " << msg << "\n" << ps << endl;
+        }
     }
 }
 

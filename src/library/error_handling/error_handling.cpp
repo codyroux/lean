@@ -17,19 +17,13 @@ Author: Leonardo de Moura
 #include "library/flycheck.h"
 
 namespace lean {
-void display_pos(io_state_stream const & ios, char const * strm_name, unsigned line, unsigned pos) {
-    ios << strm_name << ":";
-    if (ios.get_options().get_bool("flycheck", false)) {
-        // generate valid line and column for flycheck mode
-        if (line == static_cast<unsigned>(-1))
-            line = 1;
-        if (pos == static_cast<unsigned>(-1))
-            pos = 0;
-    }
-    if (line != static_cast<unsigned>(-1))
-        ios << line << ":";
-    if (pos != static_cast<unsigned>(-1))
-        ios << pos << ":";
+flycheck_scope::flycheck_scope(io_state_stream const & ios, char const * kind):
+    m_ios(ios),
+    m_use_flycheck(m_ios.get_options().get_bool("use_flycheck", false)) {
+    if (m_use_flycheck) m_ios << "FLYCHECK_BEGIN " << kind << endl;
+}
+flycheck_scope::~flycheck_scope() {
+    if (m_use_flycheck) m_ios << "FLYCHECK_END" << endl;
 }
 
 void display_error_pos(io_state_stream const & ios, char const * strm_name, unsigned line, unsigned pos) {
