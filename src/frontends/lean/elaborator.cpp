@@ -1344,7 +1344,7 @@ auto elaborator::operator()(list<expr> const & ctx, expr const & e, bool _ensure
             if (!prev || p.first != prev->first) {
                 auto out = regular(m_env, m_ios);
                 flyinfo_scope info(out);
-                out << m_pos_provider->get_file_name() << ":" << p.first.first << ":" << p.first.second
+                out << m_pos_provider->get_file_name() << ":" << p.first.first << ":" << p.first.second+1
                     << ": type\n" << p.second << endl;
                 prev = p;
             }
