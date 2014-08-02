@@ -23,7 +23,7 @@ About
 - [To Do list](doc/todo.md)
 - [Authors](doc/authors.md)
 - [Tutorial](doc/lean/tutorial.org)
-- [Library](library/library.md)
+- Library: [standard](library/standard/standard.md)
 
 Requirements
 ------------
