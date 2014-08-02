@@ -16,13 +16,15 @@ parser_pos_provider::parser_pos_provider(pos_info_table const & pos_table,
 parser_pos_provider::~parser_pos_provider() {}
 
 optional<pos_info> parser_pos_provider::get_pos_info(expr const & e) const {
+    if (!m_pos_table)
+        return optional<pos_info>();
     tag t = e.get_tag();
     if (t == nulltag)
         return optional<pos_info>();
-    if (auto it = m_pos_table.find(t))
-        return optional<pos_info>(*it);
-    else
+    auto it = m_pos_table->find(t);
+    if (it == m_pos_table->end())
         return optional<pos_info>();
+    return optional<pos_info>(it->second);
 }
 
 pos_info parser_pos_provider::get_some_pos() const {

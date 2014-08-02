@@ -272,23 +272,77 @@ void register_unary_num_tac(name const & n, std::function<tactic(tactic const &,
         });
 }
 
-void register_num_tac(name const & n, std::function<tactic(unsigned k)> f) {
-    register_tac(n, [=](type_checker & tc, elaborate_fn const &, expr const & e, pos_info_provider const *) {
-            buffer<expr> args;
-            get_app_args(e, args);
-            if (args.size() != 1)
-                throw expr_to_tactic_exception(e, "invalid tactic, it must have one argument");
-            optional<mpz> k = to_num(args[0]);
-            if (!k)
-                k = to_num(tc.whnf(args[0]).first);
-            if (!k)
-                throw expr_to_tactic_exception(e, "invalid tactic, argument must be a numeral");
-            if (!k->is_unsigned_int())
-                throw expr_to_tactic_exception(e,
-                                               "invalid tactic, argument does not fit in "
-                                               "a machine unsigned integer");
-            return f(k->get_unsigned_int());
-        });
+static register_simple_tac reg_id(name(g_tac, "id"), []() { return id_tactic(); });
+static register_simple_tac reg_now(name(g_tac, "now"), []() { return now_tactic(); });
+static register_simple_tac reg_assumption(name(g_tac, "assumption"), []() { return assumption_tactic(); });
+static register_simple_tac reg_eassumption(name(g_tac, "eassumption"), []() { return eassumption_tactic(); });
+static register_simple_tac reg_fail(name(g_tac, "fail"), []() { return fail_tactic(); });
+static register_simple_tac reg_beta(name(g_tac, "beta"), []() { return beta_tactic(); });
+static register_bin_tac reg_then(g_and_then_tac_name, [](tactic const & t1, tactic const & t2) { return then(t1, t2); });
+static register_bin_tac reg_append(name(g_tac, "append"), [](tactic const & t1, tactic const & t2) { return append(t1, t2); });
+static register_bin_tac reg_interleave(name(g_tac, "interleave"), [](tactic const & t1, tactic const & t2) { return interleave(t1, t2); });
+static register_bin_tac reg_par(name(g_tac, "par"), [](tactic const & t1, tactic const & t2) { return par(t1, t2); });
+static register_bin_tac reg_orelse(g_or_else_tac_name, [](tactic const & t1, tactic const & t2) { return orelse(t1, t2); });
+static register_unary_tac reg_repeat(g_repeat_tac_name, [](tactic const & t1) { return repeat(t1); });
+static register_tac reg_state(name(g_tac, "state"), [](type_checker &, expr const & e, pos_info_provider const * p) {
+        if (p)
+            if (auto it = p->get_pos_info(e))
+                return trace_state_tactic(std::string(p->get_file_name()), *it);
+        return trace_state_tactic();
+    });
+static register_tac reg_trace(name(g_tac, "trace"), [](type_checker & tc, expr const & e, pos_info_provider const *) {
+        buffer<expr> args;
+        get_app_args(e, args);
+        if (args.size() != 1)
+            throw expr_to_tactic_exception(e, "invalid trace tactic, argument expected");
+        if (auto str = to_string(args[0]))
+            return trace_tactic(*str);
+        else if (auto str = to_string(tc.whnf(args[0])))
+            return trace_tactic(*str);
+        else
+            throw expr_to_tactic_exception(e, "invalid trace tactic, string value expected");
+    });
+static register_tac reg_apply(name(g_tac, "apply"), [](type_checker &, expr const & e, pos_info_provider const *) {
+        return apply_tactic(app_arg(e));
+    });
+static register_tac reg_exact(g_exact_tac_name, [](type_checker &, expr const & e, pos_info_provider const *) {
+        return exact_tactic(app_arg(e));
+    });
+static register_tac reg_unfold(name(g_tac, "unfold"), [](type_checker &, expr const & e, pos_info_provider const *) {
+        expr id = get_app_fn(app_arg(e));
+        if (!is_constant(id))
+            return fail_tactic();
+        else
+            return unfold_tactic(const_name(id));
+    });
+static register_unary_num_tac reg_at_most(name(g_tac, "at_most"), [](tactic const & t, unsigned k) { return take(t, k); });
+static register_unary_num_tac reg_discard(name(g_tac, "discard"), [](tactic const & t, unsigned k) { return discard(t, k); });
+static register_unary_num_tac reg_focus_at(name(g_tac, "focus_at"), [](tactic const & t, unsigned k) { return focus(t, k); });
+static register_unary_num_tac reg_try_for(name(g_tac, "try_for"), [](tactic const & t, unsigned k) { return try_for(t, k); });
+static register_tac reg_fixpoint(g_fixpoint_name, [](type_checker & tc, expr const & e, pos_info_provider const *) {
+        if (!is_constant(app_fn(e)))
+            throw expr_to_tactic_exception(e, "invalid fixpoint tactic, it must have one argument");
+        expr r = tc.whnf(mk_app(app_arg(e), e));
+        return fixpoint(r);
+    });
+
+// We encode the 'by' expression that is used to trigger tactic execution.
+// This is a trick to avoid creating a new kind of expression.
+// 'by' macros are temporary objects used by the elaborator,
+// and have no semantic significance.
+[[ noreturn ]] static void throw_ex() { throw exception("unexpected occurrence of 'by' expression"); }
+static name g_by_name("by");
+class by_macro_cell : public macro_definition_cell {
+public:
+    virtual name get_name() const { return g_by_name; }
+    virtual expr get_type(expr const &, expr const *, extension_context &) const { throw_ex(); }
+    virtual optional<expr> expand(expr const &, extension_context &) const { throw_ex(); }
+    virtual void write(serializer &) const { throw_ex(); }
+};
+
+static macro_definition g_by(new by_macro_cell());
+expr mk_by(expr const & e) {
+    return mk_macro(g_by, 1, &e);
 }
 
 static name * g_by_name = nullptr;

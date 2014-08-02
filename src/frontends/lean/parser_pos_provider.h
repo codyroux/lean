@@ -12,7 +12,8 @@ Author: Leonardo de Moura
 #include "kernel/pos_info_provider.h"
 
 namespace lean {
-typedef rb_map<unsigned, pos_info, unsigned_cmp> pos_info_table;
+typedef std::unordered_map<unsigned, pos_info> pos_info_table;
+typedef std::shared_ptr<pos_info_table> pos_info_table_ptr;
 
 class parser_pos_provider : public pos_info_provider {
     pos_info_table m_pos_table;
