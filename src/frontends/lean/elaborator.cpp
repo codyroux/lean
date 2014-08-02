@@ -1037,7 +1037,7 @@ pair<expr, constraint_seq> elaborator::visit(expr const & e) {
             r       = mk_app(r, imp_arg, g);
             r_type  = whnf(instantiate(binding_body(r_type), imp_arg), cs);
         }
-        if (is_constant(e) || is_local(e))
+        if (is_constant(e) || is_local(e) || is_placeholder(e))
             save_flyinfo_data(e, r);
         return r;
     }
