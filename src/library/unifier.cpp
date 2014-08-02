@@ -2118,12 +2118,11 @@ struct unifier_fn {
     /** \brief Process the next constraint in the constraint queue m_cnstrs */
     bool process_next() {
         lean_assert(!m_cnstrs.empty());
+        lean_assert(!m_tc[0]->next_cnstr());
+        lean_assert(!m_tc[1]->next_cnstr());
         auto const * p = m_cnstrs.min();
         unsigned cidx  = p->second;
-        if (!m_config.m_expensive_classes && cidx >= get_group_first_index(cnstr_group::ClassInstance))
-            m_pattern = true; // use only higher-order (pattern) matching after we start processing class-instance constraints
         constraint c   = p->first;
-        // std::cout << "process_next: " << c << "\n";
         m_cnstrs.erase_min();
         if (is_choice_cnstr(c)) {
             return process_choice_constraint(c);
@@ -2134,27 +2133,15 @@ struct unifier_fn {
             if (is_level_eq_cnstr(c)) {
                 if (modified) {
                     return process_constraint(c);
-                }
-                status st = process_l_eq_max(c);
+                status st = try_level_eq_zero(c);
                 if (st != Continue) return st == Solved;
-                st = process_succ_eq_max(c);
-                if (st != Continue) return st == Solved;
-                if (m_config.m_discard) {
-                    // we only try try_level_eq_zero and try_merge_max when we are discarding
-                    // constraints that canno be solved.
-                    st = try_level_eq_zero(c);
-                    if (st != Continue) return st == Solved;
-                    if (cidx < get_group_first_index(cnstr_group::FlexFlex)) {
-                        add_cnstr(c, cnstr_group::FlexFlex);
-                        return true;
-                    }
-                    st = try_merge_max(c);
-                    if (st != Continue) return st == Solved;
-                    return process_plugin_constraint(c);
-                } else {
-                    discard(c);
+                if (cidx < get_group_first_index(cnstr_group::FlexFlex)) {
+                    add_cnstr(c, cnstr_group::FlexFlex);
                     return true;
                 }
+                st = try_merge_max(c);
+                if (st != Continue) return st == Solved;
+                return process_plugin_constraint(c);
             } else {
                 lean_assert(is_eq_cnstr(c));
                 if (is_delta_cnstr(c)) {
