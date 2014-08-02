@@ -12,88 +12,39 @@ Author: Leonardo de Moura
 #include "frontends/lean/parser_config.h"
 
 namespace lean {
+bool is_utf8_next(unsigned char c) { return (c & 0xC0) == 0x80; }
+
 unsigned scanner::get_utf8_size(unsigned char c) {
-    unsigned r = ::lean::get_utf8_size(c);
-    if (r == 0)
+    if ((c & 0x80) == 0)
+        return 1;
+    else if ((c & 0xE0) == 0xC0)
+        return 2;
+    else if ((c & 0xF0) == 0xE0)
+        return 3;
+    else if ((c & 0xF8) == 0xF0)
+        return 4;
+    else if ((c && 0xFC) == 0xF8)
+        return 5;
+    else if ((c && 0xFE) == 0xFC)
+        return 6;
+    else if (c == 0xFF)
+        return 1;
+    else
         throw_exception("invalid utf-8 head character");
-    return r;
 }
 
-unsigned char to_uchar(char c) { return static_cast<unsigned char>(c); }
-
-unsigned utf8_to_unicode(char const * begin, char const * end) {
-    unsigned result = 0;
-    if (begin == end)
-        return result;
-    auto it = begin;
-    unsigned c = to_uchar(*it);
-    ++it;
-    if (c < 128)
-        return c;
-    unsigned mask     = (1u << 6) -1;
-    unsigned hmask    = mask;
-    unsigned shift    = 0;
-    unsigned num_bits = 0;
-    while ((c & 0xC0) == 0xC0) {
-        c <<= 1;
-        c &= 0xff;
-        num_bits += 6;
-        hmask >>= 1;
-        shift++;
-        result <<= 6;
-        if (it == end)
-            return 0;
-        result |= *it & mask;
-        ++it;
-    }
-    result |= ((c >> shift) & hmask) << num_bits;
-    return result;
-}
-
-bool is_greek_unicode(unsigned u) { return 0x391 <= u && u <= 0x3DD; }
-bool is_letter_like_unicode(unsigned u) {
-    return
-        (0x3b1  <= u && u <= 0x3c9 && u != 0x3bb) || // Lower greek, but lambda
-        (0x3ca  <= u && u <= 0x3fb) ||               // Coptic letters
-        (0x1f00 <= u && u <= 0x1ffe) ||              // Polytonic Greek Extended Character Set
-        (0x2100 <= u && u <= 0x214f);                // Letter like block
-}
-bool is_super_sub_script_alnum_unicode(unsigned u) {
-    return
-        (0x2070 <= u && u <= 0x2079) ||
-        (0x207f <= u && u <= 0x2089) ||
-        (0x2090 <= u && u <= 0x209c);
+void scanner::set_line(unsigned p) {
+    m_line  = p;
+    m_sline = p;
 }
 
 void scanner::next() {
     lean_assert(m_curr != EOF);
     m_spos++;
-    while (m_spos >= static_cast<int>(m_curr_line.size())) {
-        if (m_last_line) {
-            m_curr = EOF;
-            return;
-        } else {
-            m_curr_line.clear();
-            if (std::getline(m_stream, m_curr_line)) {
-                m_curr_line.push_back('\n');
-                m_sline++;
-                m_spos  = 0;
-                m_upos  = 0;
-                m_curr  = m_curr_line[m_spos];
-                m_uskip = get_utf8_size(m_curr);
-                m_uskip--;
-                return;
-            } else {
-                m_last_line = true;
-                m_curr      = EOF;
-                return;
-            }
-        }
-    }
-    m_curr = m_curr_line[m_spos];
     if (m_uskip > 0) {
-        if (!is_utf8_next(m_curr))
+        if (!is_utf8_next(m_curr)) {
             throw_exception("invalid utf-8 sequence character");
+        }
         m_uskip--;
     } else {
         m_upos++;
@@ -300,6 +251,7 @@ void scanner::move_back(unsigned offset, unsigned u_offset) {
             u_offset--;
         }
         if (offset != 0) {
+            m_stream.seekg(-static_cast<std::streamoff>(offset), std::ios_base::cur);
             m_spos -= offset;
             m_upos -= u_offset;
         }
@@ -321,6 +273,14 @@ void scanner::next_utf(buffer<char> & cs) {
 }
 
 static bool is_id_first(buffer<char> const & cs, unsigned i) {
+    return std::isalpha(cs[i]) || cs[i] == '_';
+}
+
+static bool is_id_rest(buffer<char> const & cs, unsigned i)  {
+    return std::isalnum(cs[i]) || cs[i] == '_' || cs[i] == '\'';
+}
+
+static bool is_id_first(buffer<char> const & cs, unsigned i) {
     if (std::isalpha(cs[i]) || cs[i] == '_')
         return true;
     unsigned u = utf8_to_unicode(cs.begin() + i, cs.end());
@@ -337,6 +297,7 @@ static bool is_id_rest(buffer<char> const & cs, unsigned i)  {
 static char const * g_error_key_msg = "unexpected token";
 
 auto scanner::read_key_cmd_id() -> token_kind {
+    static char const * error_msg = "unexpected token";
     buffer<char> cs;
     next_utf_core(curr(), cs);
     unsigned num_utfs  = 1;
@@ -354,7 +315,7 @@ auto scanner::read_key_cmd_id() -> token_kind {
             } else if (cs[i] == '.') {
                 next_utf(cs);
                 num_utfs++;
-                if (!is_id_first(cs, i+1))
+                if (!is_id_rest(cs, i+1))
                     break;
             } else {
                 break;
@@ -399,7 +360,7 @@ auto scanner::read_key_cmd_id() -> token_kind {
     }
 
     if (id_sz == 0 && key_sz == 0)
-        throw_exception(g_error_key_msg);
+        throw_exception(error_msg);
     if (id_sz > key_sz) {
         move_back(cs.size() - id_sz, num_utfs - id_utf_sz);
         m_name_val = name();
@@ -478,8 +439,9 @@ auto scanner::scan(environment const & env) -> token_kind {
     }
 }
 
-scanner::scanner(std::istream & strm, char const * strm_name, unsigned line):
-    m_tokens(nullptr), m_stream(strm), m_token_info(nullptr) {
+scanner::scanner(std::istream & strm, char const * strm_name):
+    m_tokens(nullptr), m_stream(strm), m_spos(0), m_upos(0), m_uskip(0), m_sline(1), m_curr(0), m_pos(0), m_line(1),
+    m_token_info(nullptr) {
     m_stream_name = strm_name ? strm_name : "[unknown]";
     m_sline = line;
     m_line  = line;

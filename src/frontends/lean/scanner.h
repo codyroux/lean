@@ -49,6 +49,8 @@ protected:
     void next();
     char curr() const { return m_curr; }
     char curr_next() { char c = curr(); next(); return c; }
+    void new_line() { m_sline++; m_spos = 0; m_upos = 0; }
+    void update_line() { if (curr() == '\n') new_line(); }
     void check_not_eof(char const * error_msg);
     bool is_next_digit();
     bool is_next_id_rest();
