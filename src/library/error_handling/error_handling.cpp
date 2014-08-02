@@ -35,6 +35,12 @@ flyinfo_scope::~flyinfo_scope() {
     if (m_flyinfo) m_ios << "FLYCHECK_END" << endl;
 }
 
+void display_pos(io_state_stream const & ios, char const * strm_name, unsigned line, unsigned pos) {
+    ios << strm_name << ":" << line << ":";
+    if (pos != static_cast<unsigned>(-1))
+        ios << pos << ":";
+}
+
 void display_error_pos(io_state_stream const & ios, char const * strm_name, unsigned line, unsigned pos) {
     display_pos(ios, strm_name, line, pos);
     ios << " error:";
@@ -43,11 +49,6 @@ void display_error_pos(io_state_stream const & ios, char const * strm_name, unsi
 void display_warning_pos(io_state_stream const & ios, char const * strm_name, unsigned line, unsigned pos) {
     display_pos(ios, strm_name, line, pos);
     ios << " warning:";
-}
-
-void display_information_pos(io_state_stream const & ios, char const * strm_name, unsigned line, unsigned pos) {
-    display_pos(ios, strm_name, line, pos);
-    ios << " information:";
 }
 
 void display_error_pos(io_state_stream const & ios, pos_info_provider const * p, expr const & e) {

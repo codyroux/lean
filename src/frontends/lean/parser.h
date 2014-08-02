@@ -115,21 +115,6 @@ class parser {
     // We process theorems in parallel
     theorem_queue           m_theorem_queue;
 
-    // info support
-    snapshot_vector *       m_snapshot_vector;
-    info_manager *          m_info_manager;
-    info_manager            m_pre_info_manager; // type information before elaboration
-
-    // cache support
-    definition_cache *     m_cache;
-    // index support
-    declaration_index *    m_index;
-
-    keep_theorem_mode      m_keep_theorem_mode;
-
-    // curr command token
-    name                   m_cmd_token;
-
     void display_warning_pos(unsigned line, unsigned pos);
     void display_warning_pos(pos_info p);
     void display_error_pos(unsigned line, unsigned pos);

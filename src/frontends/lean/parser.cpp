@@ -131,7 +131,8 @@ expr parser::mk_sorry(pos_info const & p) {
     m_used_sorry = true;
     {
         flycheck_warning wrn(regular_stream());
-        regular_stream() << get_stream_name() << ":" << p.first << ":" << p.second << ": warning using 'sorry'" << endl;
+        display_warning_pos(p.first, p.second);
+        regular_stream() << " using 'sorry'" << endl;
     }
     return get_sorry_constant();
 }
@@ -162,10 +163,6 @@ void parser::display_warning_pos(unsigned line, unsigned pos) {
     ::lean::display_warning_pos(regular_stream(), get_stream_name().c_str(), line, pos);
 }
 void parser::display_warning_pos(pos_info p) { display_warning_pos(p.first, p.second); }
-
-void parser::display_information_pos(pos_info pos) {
-    ::lean::display_information_pos(regular_stream(), get_stream_name().c_str(), pos.first, pos.second);
-}
 
 void parser::display_error_pos(unsigned line, unsigned pos) {
     ::lean::display_error_pos(regular_stream(), get_stream_name().c_str(), line, pos);
@@ -1322,19 +1319,11 @@ bool parser::parse_commands() {
     scoped_set_distinguishing_pp_options set(get_distinguishing_pp_options());
     try {
         bool done = false;
-        protected_call([&]() {
-                parse_imports();
-            },
-            [&]() { sync_command(); });
+        parse_imports();
         if (has_sorry(m_env)) {
-#ifndef LEAN_IGNORE_SORRY
-            // TODO(Leo): remove the #ifdef.
-            // The compilation option LEAN_IGNORE_SORRY is a temporary hack for the nightly builds
-            // We use it to avoid a buch of warnings on cdash.
             flycheck_warning wrn(regular_stream());
             display_warning_pos(pos());
             regular_stream() << " imported file uses 'sorry'" << endl;
-#endif
         }
         while (!done) {
             protected_call([&]() {
