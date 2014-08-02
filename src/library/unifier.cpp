@@ -310,6 +310,7 @@ struct unifier_fn {
     unifier_config   m_config;
     unsigned         m_num_steps;
     bool             m_expensive;
+    bool             m_pattern; //!< If true, then only higher-order (pattern) matching is used
     bool             m_first; //!< True if we still have to generate the first solution.
     unsigned         m_next_assumption_idx; //!< Next assumption index.
     unsigned         m_next_cidx; //!< Next constraint index.
@@ -358,8 +359,7 @@ struct unifier_fn {
 
         /** \brief Save unifier's state */
         case_split(unifier_fn & u, justification const & j):
-            m_assumption_idx(u.m_next_assumption_idx), m_jst(j), m_subst(u.m_subst),
-            m_postponed(u.m_postponed), m_cnstrs(u.m_cnstrs), m_type_map(u.m_type_map),
+            m_assumption_idx(u.m_next_assumption_idx), m_jst(j), m_subst(u.m_subst), m_cnstrs(u.m_cnstrs),
             m_mvar_occs(u.m_mvar_occs), m_owned_map(u.m_owned_map), m_pattern(u.m_pattern) {
             u.m_next_assumption_idx++;
         }
@@ -373,7 +373,6 @@ struct unifier_fn {
             u.m_mvar_occs = m_mvar_occs;
             u.m_owned_map = m_owned_map;
             u.m_pattern   = m_pattern;
-            u.m_type_map  = m_type_map;
             m_assumption_idx = u.m_next_assumption_idx;
             m_failed_justifications = mk_composite1(m_failed_justifications, *u.m_conflict);
             u.m_next_assumption_idx++;
@@ -413,7 +412,7 @@ struct unifier_fn {
                name_generator const & ngen, substitution const & s,
                bool use_exception, unsigned max_steps, bool expensive):
         m_env(env), m_ngen(ngen), m_subst(s), m_plugin(get_unifier_plugin(env)),
-        m_use_exception(use_exception), m_max_steps(max_steps), m_num_steps(0), m_expensive(expensive) {
+        m_use_exception(use_exception), m_max_steps(max_steps), m_num_steps(0), m_expensive(expensive), m_pattern(false) {
         m_tc[0] = mk_type_checker_with_hints(env, m_ngen.mk_child(), false);
         m_tc[1] = mk_type_checker_with_hints(env, m_ngen.mk_child(), true);
         m_next_assumption_idx = 0;
@@ -1570,130 +1569,48 @@ struct unifier_fn {
             }
         }
 
-        /** \brief Create the local context \c locals for the imitiation step.
-         */
-        void mk_local_context(buffer<expr> & locals, constraint_seq & cs) {
-            expr mtype     = mlocal_type(m);
-            unsigned nargs = margs.size();
-            mtype = ensure_sufficient_args(mtype, cs);
-            expr it = mtype;
-            for (unsigned i = 0; i < nargs; i++) {
-                expr d     = instantiate_rev(binding_domain(it), locals.size(), locals.data());
-                auto d_jst = u.m_subst.instantiate_metavars(d);
-                d = d_jst.first;
-                j = mk_composite1(j, d_jst.second);
-                name n;
-                if (is_local(margs[i]) && local_occurs_once(margs[i], margs)) {
-                    n = mlocal_name(margs[i]);
-                } else {
-                    n = u.m_ngen.next();
-                }
-                expr local = mk_local(n, binding_name(it), d, binding_info(it));
-                locals.push_back(local);
-                it = binding_body(it);
-            }
-        }
-
-        expr mk_imitiation_arg(expr const & arg, expr const & type, buffer<expr> const & locals,
-                               constraint_seq & cs) {
-            // The following optimization is broken. It does not really work when we have dependent
-            // types. The problem is that the type of arg may depend on other arguments,
-            // and constraints are not generated to enforce it.
-            //
-            //  Here is a minimal counterexample
-            //     ?M A B a b H B b  =?=  heq.type_eq A B a b H
-            //  with this optimization the imitation is
-            //
-            //    ?M := fun (A B a b H B' b'), heq.type_eq A (?M1 A B a b H B' b') a (?M2 A B a b H B' b') H
-            //
-            //  This imitation is only correct if
-            //     typeof(H) is (heq A a (?M1 A B a b H B' b') (?M2 A B a b H B' b'))
-            //
-            //  Adding an extra constraint is problematic since typeof(H) may contain local constants,
-            //  and these local constants may have been "renamed" by mk_local_context above
-            //
-            //  For now, we simply comment the optimization.
-            //
-
-            // Broken optimization
-            // if (!has_meta_args() && is_local(arg) && contains_local(arg, locals)) {
-            //    return arg;
-            // }
-
-            // The following code is not affected by the problem above because we
-            // attach the type \c type to the new metavariables being created.
-
-            // std::cout << "type: " << type << "\n";
-            if (context_check(type, locals)) {
-                expr maux    = mk_metavar(u.m_ngen.next(), Pi(locals, type));
-                // std::cout << "  >> " << maux << " : " << mlocal_type(maux) << "\n";
-                cs = mk_eq_cnstr(mk_app(maux, margs), arg, j, relax) + cs;
-                return mk_app(maux, locals);
-            } else {
-                expr maux_type   = mk_metavar(u.m_ngen.next(), Pi(locals, mk_sort(mk_meta_univ(u.m_ngen.next()))));
-                expr maux        = mk_metavar(u.m_ngen.next(), Pi(locals, mk_app(maux_type, locals)));
-                cs = mk_eq_cnstr(mk_app(maux, margs), arg, j, relax) + cs;
-                return mk_app(maux, locals);
-            }
-        }
-
-        void mk_app_imitation_core(expr const & f, buffer<expr> const & locals, constraint_seq & cs) {
-            buffer<expr> rargs;
-            get_app_args(rhs, rargs);
-            buffer<expr> sargs;
-            try {
-                expr f_type = tc().infer(f, cs);
-                for (expr const & rarg : rargs) {
-                    f_type      = tc().ensure_pi(f_type, cs);
-                    expr d_type = binding_domain(f_type);
-                    expr sarg   = mk_imitiation_arg(rarg, d_type, locals, cs);
-                    sargs.push_back(sarg);
-                    f_type      = instantiate(binding_body(f_type), sarg);
-                }
-            } catch (exception&) {}
-            expr v = Fun(locals, mk_app(f, sargs));
-            cs += mk_eq_cnstr(m, v, j, relax);
-            alts.push_back(cs.to_list());
-        }
-
-        /**
-           \brief Given
-               m      := a metavariable ?m
-               margs  := [a_1 ... a_k]
-               rhs    := (f b_1 ... b_n)
-           Then create the constraints
-               (?m_1 a_1 ... a_k) =?= b_1
-               ...
-               (?m_n a_1 ... a_k) =?= b_n
-               ?m  =?= fun (x_1 ... x_k), g (?m_1 x_1 ... x_k) ... (?m_n x_1 ... x_k)
-
-           If f is a constant, then g is f.
-           If f is a local constant, then we consider each a_i that is equal to f.
-
-           Remark: we try to minimize the number of constraints (?m_i a_1 ... a_k) =?= b_i by detecting "easy" cases
-           that can be solved immediately. See \c mk_imitiation_arg
-        */
-        void mk_app_imitation() {
-            lean_assert(is_metavar(m));
-            lean_assert(is_app(rhs));
-            buffer<expr> locals;
-            constraint_seq cs;
-            flet<justification> let(j, j); // save j value
-            mk_local_context(locals, cs);
-            lean_assert(margs.size() == locals.size());
+    void process_flex_rigid_core(expr const & lhs, expr const & rhs, justification const & j, bool relax, buffer<constraints> & alts) {
+        buffer<expr> margs;
+        expr m     = get_app_args(lhs, margs);
+        switch (rhs.kind()) {
+        case expr_kind::Var: case expr_kind::Meta:
+            lean_unreachable(); // LCOV_EXCL_LINE
+        case expr_kind::Local:
+            mk_simple_projections(m, margs, rhs, j, alts, relax);
+            break;
+        case expr_kind::Sort: case expr_kind::Constant:
+            if (!m_pattern)
+                mk_simple_projections(m, margs, rhs, j, alts, relax);
+            mk_simple_imitation(m, rhs, j, alts, relax);
+            break;
+        case expr_kind::Pi: case expr_kind::Lambda:
+            if (!m_pattern)
+                mk_simple_projections(m, margs, rhs, j, alts, relax);
+            mk_bindings_imitation(m, margs, rhs, j, alts, relax);
+            break;
+        case expr_kind::Macro:
+            if (!m_pattern)
+                mk_simple_projections(m, margs, rhs, j, alts, relax);
+            mk_macro_imitation(m, margs, rhs, j, alts, relax);
+            break;
+        case expr_kind::App: {
             expr const & f = get_app_fn(rhs);
             lean_assert(is_constant(f) || is_local(f));
             if (is_local(f)) {
                 unsigned i = margs.size();
                 while (i > 0) {
                     --i;
-                    if (is_local(margs[i]) && mlocal_name(margs[i]) == mlocal_name(f)) {
-                        constraint_seq new_cs = cs;
-                        mk_app_imitation_core(locals[i], locals, new_cs);
-                    }
+                    expr const & marg = margs[i];
+                    if (is_local(marg) && mlocal_name(marg) == mlocal_name(f))
+                        mk_flex_rigid_app_cnstrs(m, margs, mk_var(vidx), rhs, j, alts, relax);
+                    else if (!m_pattern)
+                        mk_simple_nonlocal_projection(m, margs, i, rhs, j, alts, relax);
                 }
             } else {
-                mk_app_imitation_core(f, locals, cs);
+                lean_assert(is_constant(f));
+                if (!m_pattern)
+                    mk_simple_projections(m, margs, rhs, j, alts, relax);
+                mk_flex_rigid_app_cnstrs(m, margs, f, rhs, j, alts, relax);
             }
         }
 
@@ -2122,6 +2039,8 @@ struct unifier_fn {
         lean_assert(!m_tc[1]->next_cnstr());
         auto const * p = m_cnstrs.min();
         unsigned cidx  = p->second;
+        if (!m_expensive && cidx > get_group_first_index(cnstr_group::MaxDelayed))
+            m_pattern = true; // use only higher-order (pattern) matching after we start processing MaxDelayed (aka class-instance constraints)
         constraint c   = p->first;
         m_cnstrs.erase_min();
         if (is_choice_cnstr(c)) {
