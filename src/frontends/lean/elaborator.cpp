@@ -1362,12 +1362,14 @@ auto elaborator::operator()(list<expr> const & ctx, expr const & e, bool _ensure
 
     void display_flyinfo(substitution const & s) {
         instantiate_flyinfo(s);
-        optional<flyinfo_data> prev;
+        flyinfo_data prev;
+        bool first = true;
         for (auto const & p : m_flyinfo_data) {
-            if (!prev || p.first != prev->first) {
+            if (first || p.first != prev.first) {
                 display_flyinfo_data(p);
                 prev = p;
             }
+            first = false;
         }
     }
 
