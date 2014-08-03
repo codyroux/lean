@@ -17,9 +17,6 @@ env = env:add_universe("v")
 local u        = global_univ("u")
 local v        = global_univ("v")
 
-function display_type(env, t)
-   print(tostring(t) .. " : " .. tostring(type_checker(env):check(t)))
-end
 
 env = add_inductive(env,
                     "nat", Type,
@@ -37,188 +34,142 @@ local a        = Local("a", Nat)
 local b        = Local("b", Nat)
 local n        = Local("n", Nat)
 local c        = Local("c", Nat)
-local add      = Fun(a, b, nat_rec1(mk_lambda("_", Nat, Nat), b, Fun(n, c, succ(c)), a))
-
--- display_type(env, nat_rec1)
--- display_type(env, add)
-local tc = type_checker(env)
-assert(tc:is_def_eq(add(succ(succ(zero)), succ(zero)),
-                    succ(succ(succ(zero)))))
+-- local add      = Fun(a, b, nat_rec1(mk_lambda("_", Nat, Nat), b, Fun(n, c, succ(c)), a))
 
 
-
-
-function iter(f, sexp)
-   if sexp:is_nil() then
-
-   elseif sexp:is_cons() then
-      local car, cdr = sexp:fields()
-      f(car)
-      iter(f, cdr)
-   else
-      f(sexp)
-   end
-end
-
-function len(sexp)
-   local n = 0
-   iter(function (a) n = n+1 end,
-        sexp)
-   return n
-end
-
-function map(f, sexp)
-   if sexp:is_nil() then
-      return sexpr()
-   elseif sexp:is_cons() then
-      return sexpr(f(sexp:head()), map(f, sexp:tail()))
-   else
-      return sexpr()
-   end
-end
-
-function i_th(i, sexp)
-   if sexp:is_nil() then
-      error("i argument to i_th out of bounds!")
-   elseif sexp:is_cons() then
-      if i <= 1 then
-         return sexp:head()
-      else
-         return i_th(i-1, sexp:tail())
-      end
-   else
-      if i <=1 then
-         return sexp
-      else
-         error("i arguement to i_th is out of bounds!")
-      end
-   end
-end
-
-pat = sexpr(name('zero'), name('one'), name('two'), name('three'), name('four'))
-
--- print(len(pat))
--- print(pat)
--- print(map(len, pat))
--- print(i_th(0, pat))
--- print(i_th(1, pat))
--- print(i_th(2, pat))
--- print(i_th(3, pat))
--- print(i_th(4, pat))
--- print(i_th(5, pat))
--- print(i_th(6, pat))
-
-function iter_leaves(f, sexp)
-   if sexp:is_nil() then
-
-   elseif sexp:is_cons() then
-      local car, cdr = sexp:fields()
-      iter_leaves(f, car)
-      iter_leaves(f, cdr)
-   else
-      f(sexp)
-   end
-end
-
-
-function get_args(expr)
-   out = sexpr(nil)
-   e = expr
-   while e:is_app() do
-      out = sexpr(e:arg(), out)
-      e = e:fn()
-   end
-   return out
-end
-
-
-function get_fun(expr)
-   e = expr
-   while e:is_app() do
-      e = e:fn()
-   end
-   return e
-end
-
-assert(sexpr(a):to_external())
-
-function pat_from_expr(expr)
-   args = get_args(expr)
-   fun = get_fun(expr)
-   args = map(function (a) return a:to_external() end, args)
-   return sexpr(fun, args)
-end
-
-print(pat_from_expr(add(a, b)))
 
 
 local x = Local('x', Nat)
 local y = Local('y', Nat)
-pat = sexpr(add, {x, y},
-            sexpr({zero,    zero,    "=", zero},
-                  {succ(x), zero,    "=", succ(x)},
-                  {zero,    succ(y), "=", succ(y)},
-                  {succ(x), succ(y), "=", succ(succ(add(x,y)))}))
+
+function table.reverse ( tab )
+    local size = #tab
+    local newTable = {}
+
+    for i,v in ipairs ( tab ) do
+        newTable[size-i + 1] = v
+    end
+
+    return newTable
+end
+
+function get_args(expr)
+   out = {}
+   e = expr
+   while e:is_app() do
+      table.insert(out, e:arg())
+      e = e:fn()
+   end
+   return table.reverse(out)
+end
 
 
+function mk_pats(vars, eqns)
+   local pats = {}
+   local rets = {}
+   for k, e in pairs(eqns) do
+      e_args = get_args(e)
+      lhs = e_args[1]
+      rhs = e_args[2]
+
+      p_map = {}
+      pat_list = get_args(lhs)
+      for i, x in pairs(vars) do
+         p_map[x] = pat_list[i]
+         print(pat_list[i])
+      end
+      table.insert(pats, p_map)
+      table.insert(rets, rhs)
+   end
+   return pats, rets
+end
+
+local empty_tree = {empty = true}
+local var_tree = {var = true}
+local case_tree = {case = true}
 
 function choose_var(vars, pats)
-   if #vars == 0  then
-      return sexpr("done", nil)
+   if #vars == 0 then
+      return nil, empty_tree
    else
-      local i = find_triv(pats)
-      if i then
-         return sexpr("triv", i)
+      local triv = true
+      local v = vars[1]
+      for i, ps in pairs(pats) do
+         p_v = ps[v]
+         if p_v:is_local() then triv = false end
+      end
+      if triv then
+         return v, var_tree
       else
-         return sepxr("split", 1)
+         return v, case_tree
       end
    end
 end
 
-function build_mt(fun, vars, pats)
-   local c = choose_var(vars, pats)
-   if c:head() == sexpr("done") then
-      if pats:length() ~= 1 then
-         error("ambiguous pattern matching")
-      else
-         return sexpr("return", pats:to_expr())
-      end
-   elseif c:head() == sexpr("triv") then
-      local i = c:tail()
-      local x = vars[i]
-      table.delete(i, vars)
-      old_vars = {}
-      iter(function (p)
-              table.push(old_vars, p[i])
-              table.delete(i, p) end,
-           pats)
-      return sexpr('var', x, old_vars,
-                   build_mt(fun, vars, pats))
-   elseif c:head() == sexpr("split") then
-      -- get constructor corresponding to the split
-      local hd_cstr, subs = pats[1]:fields()
-      -- create the variables for the subpatterns
-      local sub_vars = mk_sub_vars(cstr)
+function table.copy(t)
+   local new = {}
+   for i, x in pairs(t) do
+      t[i] = x
+   end
+   return new
+end
 
+function abstract(a, b)
+end
+function instantiate(a, b)
+
+function substitute(e, x, t)
+   return instantiate(abstract(e, x), t)
+end
+
+function mk_match_tree(name, vars, pats, rets)
+   local x, case = choose_var(vars, pats)
+   if case.empty then
+      if #rets == 1 then
+         mk_return(rets[1])
+      else
+         print("Ambiguous match")
+      end
+   elseif case.var then
+      new = table.copy(vars)
+      new[x] = nil
+      for i, v in pairs(rets) do
+         substitute(v, x, pats[i][x])
+      end
    else
-      error()
+      assert(case.case)
    end
 end
 
 
--- function add_fundef(env, fname, ty, patlen, pats)
+function fundef(name, vars, eqns)
+   local pats, rets = mk_pats(vars, eqns)
+   local tree = mk_match_tree(name, vars, pats, rets)
+   return fun_from_tree(name, tree)
+end
 
--- end
+local x = Local("x", Nat)
+local y = Local("y", Nat)
+local add_cst = Local("add",
+                      mk_arrow(Nat, mk_arrow(Nat, Nat)))
 
--- m = Const("m")
--- add = Const("add")
--- env = add_fundef(env, "add", mk_arrow(Nat, mk_arrow(Nat, Nat)),
---                  {add(zero, zero), "=", zero,
---                   add(zero, n), "=", n,
---                   add(n, zero), "=", n,
---                   add(succ(n), succ(m)), "=", succ(succ(add(n,m)))})
+-- replace this with the "real" equality
+local eq = Local("eq", A)
 
--- v = Const("v")
+function Eq(a, b)
+   return mk_app(mk_app(eq, a), b)
+end
 
--- env = add_fundef(env, "head", Pi({{n, Nat, true}}, mk_arrow(vec_I(Nat, succ(n)), Nat)),
---                  {head(n, cons(m, v)), "=", m})
+function add(x, y)
+   return mk_app(mk_app(add_cst, x), y)
+end
+
+function S(x)
+   return mk_app(succ, x)
+end
+
+add = fundef(add, {x, y},
+             {Eq(add(zero, zero)  , zero),
+              Eq(add(S(x), zero)  , S(x)),
+              Eq(add(zero, S(y))  , S(y)),
+              Eq(add(S(x), S(y))  , S(S(add(x,y))))})
