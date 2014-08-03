@@ -1,10 +1,10 @@
-import logic
+import standard
 
-constant N : Type
-constant α : N
-constant β₁ : N
+variable N : Type
+variable α : N
+variable β₁ : N
 check β₁
-constant δ : N
+variable δ : N
 check δ
-constant δ₁₁ : N
+variable δ₁₁ : N
 check δ₁₁
