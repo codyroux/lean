@@ -39,12 +39,6 @@ typedef pair<std::string, std::function<void(serializer &)>> writer;
 struct module_ext : public environment_extension {
     list<module_name> m_direct_imports;
     list<writer>      m_writers;
-    name_set          m_module_defs;
-    // auxiliary information for detecting whether
-    // directly imported files have changed
-    list<time_t>      m_direct_imports_mod_time;
-    std::string       m_base;
-    name_set          m_imported;
 };
 
 struct module_ext_reg {
@@ -273,12 +267,11 @@ struct import_modules_fn {
     }
 
     module_info_ptr load_module_file(std::string const & base, module_name const & mname) {
+        // TODO(Leo): support module_name
         std::string fname = find_file(base, mname.get_k(), mname.get_name(), {".olean"});
         auto it    = m_module_info.find(fname);
         if (it)
             return *it;
-        if (m_imported.contains(fname)) // file was imported in previous call
-            return nullptr;
         if (m_visited.contains(fname))
             throw exception(sstream() << "circular dependency detected at '" << fname << "'");
         m_visited.insert(fname);
@@ -286,54 +279,47 @@ struct import_modules_fn {
         std::ifstream in(fname, std::ifstream::binary);
         if (!in.good())
             throw exception(sstream() << "failed to open file '" << fname << "'");
-        try {
-            deserializer d1(in);
-            std::string header;
-            d1 >> header;
-            if (header != g_olean_header)
-                throw exception(sstream() << "file '" << fname << "' does not seem to be a valid object Lean file, invalid header");
-            unsigned major, minor, patch, claimed_hash;
-            d1 >> major >> minor >> patch >> claimed_hash;
-            // Enforce version?
+        deserializer d1(in);
+        std::string header;
+        d1 >> header;
+        if (header != g_olean_header)
+            throw exception(sstream() << "file '" << fname << "' does not seem to be a valid object Lean file, invalid header");
+        unsigned major, minor, claimed_hash;
+        d1 >> major >> minor >> claimed_hash;
+        // Enforce version?
 
-            unsigned num_imports  = d1.read_unsigned();
-            buffer<module_name> imports;
-            for (unsigned i = 0; i < num_imports; i++)
-                imports.push_back(read_module_name(d1));
+        unsigned num_imports  = d1.read_unsigned();
+        buffer<module_name> imports;
+        for (unsigned i = 0; i < num_imports; i++)
+            imports.push_back(read_module_name(d1));
 
-            unsigned code_size    = d1.read_unsigned();
-            std::vector<char> code(code_size);
-            for (unsigned i = 0; i < code_size; i++)
-                code[i] = d1.read_char();
+        unsigned code_size    = d1.read_unsigned();
+        std::vector<char> code(code_size);
+        for (unsigned i = 0; i < code_size; i++)
+            code[i] = d1.read_char();
 
-            unsigned computed_hash = hash(code_size, [&](unsigned i) { return code[i]; });
-            if (claimed_hash != computed_hash)
-                throw exception(sstream() << "file '" << fname << "' has been corrupted, checksum mismatch");
+        unsigned computed_hash = hash(code_size, [&](unsigned i) { return code[i]; });
+        if (claimed_hash != computed_hash)
+            throw exception(sstream() << "file '" << fname << "' has been corrupted, checksum mismatch");
 
-            module_info_ptr r = std::make_shared<module_info>();
-            r->m_fname        = fname;
-            r->m_counter      = 0;
-            r->m_module_idx   = g_null_module_idx;
-            m_import_counter++;
-            std::string new_base = dirname(fname.c_str());
-            std::swap(r->m_obj_code, code);
-            bool has_dependency = false;
-            for (auto i : imports) {
-                if (auto d = load_module_file(new_base, i)) {
-                    r->m_counter++;
-                    d->m_dependents.push_back(r);
-                    has_dependency = true;
-                }
-            }
-            m_module_info.insert(fname, r);
-            r->m_module_idx = m_next_module_idx++;
-
-            if (!has_dependency)
-                add_import_module_task(r);
-            return r;
-        } catch (corrupted_stream_exception&) {
-            throw corrupted_file_exception(fname);
+        module_info_ptr r = std::make_shared<module_info>();
+        r->m_fname        = fname;
+        r->m_counter      = imports.size();
+        r->m_module_idx   = g_null_module_idx;
+        m_import_counter++;
+        std::string new_base = dirname(fname.c_str());
+        std::swap(r->m_obj_code, code);
+        for (auto i : imports) {
+            auto d = load_module_file(new_base, i);
+            d->m_dependents.push_back(r);
         }
+        m_module_info.insert(fname, r);
+        r->m_module_idx = m_next_module_idx++;
+
+        if (imports.empty())
+            add_import_module_task(r);
+
+        return r;
     }
 
     void add_asynch_task(asynch_update_fn const & f) {
@@ -511,27 +497,17 @@ struct import_modules_fn {
         return env;
     }
 
-    void store_direct_imports(std::string const & base, unsigned num_modules, module_name const * modules) {
+    void store_direct_imports(unsigned num_modules, module_name const * modules) {
         m_senv.update([&](environment const & env) -> environment {
                 module_ext ext = get_extension(env);
-                ext.m_base     = base;
-                for (unsigned i = 0; i < num_modules; i++) {
-                    module_name const & mname = modules[i];
-                    std::string fname = find_file(base, mname.get_k(), mname.get_name(), {".olean"});
-                    if (!m_imported.contains(fname)) {
-                        ext.m_direct_imports = cons(mname, ext.m_direct_imports);
-                        struct stat st;
-                        if (stat(fname.c_str(), &st) != 0)
-                            throw exception(sstream() << "failed to access stats of file '" << fname << "'");
-                        ext.m_direct_imports_mod_time = cons(st.st_mtime, ext.m_direct_imports_mod_time);
-                    }
-                }
+                for (unsigned i = 0; i < num_modules; i++)
+                    ext.m_direct_imports = cons(modules[i], ext.m_direct_imports);
                 return update(env, ext);
             });
     }
 
     environment operator()(std::string const & base, unsigned num_modules, module_name const * modules) {
-        store_direct_imports(base, num_modules, modules);
+        store_direct_imports(num_modules, modules);
         for (unsigned i = 0; i < num_modules; i++)
             load_module_file(base, modules[i]);
         process_asynch_tasks();
@@ -550,22 +526,5 @@ environment import_modules(environment const & env, std::string const & base, un
 environment import_module(environment const & env, std::string const & base, module_name const & module,
                           unsigned num_threads, bool keep_proofs, io_state const & ios) {
     return import_modules(env, base, 1, &module, num_threads, keep_proofs, ios);
-}
-
-void initialize_module() {
-    g_ext            = new module_ext_reg();
-    g_object_readers = new object_readers();
-    g_glvl_key       = new std::string("glvl");
-    g_decl_key       = new std::string("decl");
-    g_inductive      = new std::string("ind");
-    register_module_object_reader(*g_inductive, module::inductive_reader);
-}
-
-void finalize_module() {
-    delete g_inductive;
-    delete g_decl_key;
-    delete g_glvl_key;
-    delete g_object_readers;
-    delete g_ext;
 }
 }

@@ -1234,7 +1234,7 @@ static optional<std::string> try_file(std::string const & base, optional<unsigne
     }
 }
 
-static std::string * g_lua_module_key = nullptr;
+static std::string g_lua_module_key("lua_module");
 static void lua_module_reader(deserializer & d, module_idx, shared_environment &,
                               std::function<void(asynch_update_fn const &)> &,
                               std::function<void(delayed_update_fn const &)> & add_delayed_update) {
@@ -1251,14 +1251,12 @@ void parser::parse_imports() {
     buffer<module_name> olean_files;
     buffer<name>        lua_files;
     std::string base = dirname(get_stream_name().c_str());
-    bool imported    = false;
-    while (curr_is_token(get_import_tk())) {
-        imported       = true;
+    while (curr_is_token(g_import)) {
         m_last_cmd_pos = pos();
         next();
         while (true) {
             optional<unsigned> k;
-            while (curr_is_token(get_period_tk())) {
+            while (curr_is_token(g_period)) {
                 next();
                 if (!k)
                     k = 0;
@@ -1291,9 +1289,7 @@ void parser::parse_imports() {
     unsigned num_threads = 0;
     if (get_parser_parallel_import(m_ios.get_options()))
         num_threads = m_num_threads;
-    bool keep_imported_thms = (m_keep_theorem_mode == keep_theorem_mode::All);
-    m_env = import_modules(m_env, base, olean_files.size(), olean_files.data(), num_threads,
-                           keep_imported_thms, m_ios);
+    m_env = import_modules(m_env, base, olean_files.size(), olean_files.data(), num_threads, true, m_ios);
     for (auto const & f : lua_files) {
         std::string rname = find_file(f, {".lua"});
         system_import(rname.c_str());

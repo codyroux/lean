@@ -14,11 +14,6 @@ Author: Leonardo de Moura
 #include "library/io_state.h"
 
 namespace lean {
-class corrupted_file_exception : public exception {
-public:
-    corrupted_file_exception(std::string const & fname);
-};
-
 class module_name {
     optional<unsigned> m_relative;
     name               m_name;
@@ -31,9 +26,10 @@ public:
     optional<unsigned> const & get_k() const { return m_relative; }
 };
 
-/** \brief Return an environment based on \c env, where all modules in \c modules are imported.
-    Modules included directly or indirectly by them are also imported.
-    The environment \c env is usually an empty environment.
+/**
+   \brief Return an environment based on \c env, where all modules in \c modules are imported.
+   Modules included directly or indirectly by them are also imported.
+   The environment \c env is usually an empty environment.
 
     If \c keep_proofs is false, then the proof of the imported theorems is discarded after being
     checked. The idea is to save memory.
