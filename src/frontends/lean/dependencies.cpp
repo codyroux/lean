@@ -25,7 +25,6 @@ bool display_deps(environment const & env, std::ostream & out, std::ostream & er
     std::string base = dirname(fname);
     bool import_prefix = false;
     bool import_args   = false;
-    bool ok            = true;
     while (true) {
         scanner::token_kind t = scanner::token_kind::Identifier;
         try {
@@ -45,21 +44,16 @@ bool display_deps(environment const & env, std::ostream & out, std::ostream & er
                 k = *k + 1;
         } else if ((import_prefix || import_args) && t == scanner::token_kind::Identifier) {
             import_args = true;
-            try {
-                std::string m_name = find_file(base, k, name_to_file(s.get_name_val()), {".lean", ".olean", ".lua"});
-                int last_idx = m_name.find_last_of(".");
-                std::string rawname = m_name.substr(0, last_idx);
-                std::string ext = m_name.substr(last_idx);
-                if (ext == ".lean")
-                    m_name = rawname + ".olean";
-                display_path(out, m_name);
-                k = optional<unsigned>();
-                import_prefix = true;
-                out << "\n";
-            } catch (exception & new_ex) {
-                err << "error: file '" << name_to_file(s.get_name_val()) << "' not found in the LEAN_PATH" << std::endl;
-                ok  = false;
-            }
+            std::string m_name = find_file(base, k, name_to_file(s.get_name_val()), {".lean", ".olean", ".lua"});
+            int last_idx = m_name.find_last_of(".");
+            std::string rawname = m_name.substr(0, last_idx);
+            std::string ext = m_name.substr(last_idx);
+            if (ext == ".lean")
+                m_name = rawname + ".olean";
+            display_path(out, m_name);
+            k = optional<unsigned>();
+            import_prefix = true;
+            out << "\n";
         } else {
             import_args   = false;
             import_prefix = false;
