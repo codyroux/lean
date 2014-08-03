@@ -54,7 +54,4 @@ void display_path(std::ostream & out, std::string const & fname);
 
 std::string dirname(char const * fname);
 std::string path_append(char const * path1, char const * path2);
-
-void initialize_lean_path();
-void finalize_lean_path();
 }
